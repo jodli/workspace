@@ -1,0 +1,16 @@
+{
+  "name": "workspace",
+  "owner": {
+    "name": "jodli"
+  },
+  "metadata": {
+    "description": "ws: multi-repo worktree workspace for coding agents"
+  },
+  "plugins": [
+    {
+      "name": "ws",
+      "source": "./plugin",
+      "description": "Multi-repo worktree workspace: the ws workflow skill and a guard hook that keeps agents out of repos/"
+    }
+  ]
+}

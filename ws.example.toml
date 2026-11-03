@@ -1,0 +1,13 @@
+# ws.toml marks the workspace root. Copy this there and adjust.
+
+[gitlab]
+# Clone URLs are git@<host>:<path>.git, with <path> from repos.tsv.
+host = "gitlab.example.com"
+
+[warm]
+# Copied from the newest other worktree of the same repo into a new one.
+# Hidden dirs (.venv) cannot be listed: they hold absolute paths.
+dirs = ["target", "node_modules"]
+# Without copy-on-write (Windows NTFS, ext4): "copy" does a full copy,
+# "skip" leaves the new worktree cold.
+fallback = "copy"

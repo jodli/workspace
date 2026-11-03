@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "ws guard" }]
+      }
+    ]
+  }
+}
