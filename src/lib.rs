@@ -16,5 +16,6 @@ pub mod names;
 pub mod removal;
 pub mod roster;
 pub mod space;
+pub mod warm;
 pub mod workspace;
 pub mod worktree;

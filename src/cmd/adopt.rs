@@ -4,11 +4,12 @@
 use serde::Serialize;
 
 use super::Report;
-use super::create::{CreateOutcome, Fetch, WorktreeResult, place};
+use super::create::{CreateOutcome, Fetch, WorktreeResult, place, warm_placed};
 use crate::error::{Error, Exit, WorkspaceError};
 use crate::git::{Rev, Untracked};
 use crate::names::{BranchName, RepoName, SpaceName};
 use crate::space::{self, Meta, Purpose};
+use crate::warm::Warmth;
 use crate::workspace::{Slot, Workspace};
 
 #[derive(Debug, Serialize)]
@@ -31,6 +32,7 @@ pub fn adopt(
     space: SpaceName,
     repo: &RepoName,
     branch: BranchName,
+    warmth: Warmth,
 ) -> Result<AdoptReport, Error> {
     let lock = ws.lock()?;
     let repo = ws.cloned(repo)?;
@@ -81,6 +83,7 @@ pub fn adopt(
     Ok(AdoptReport {
         space,
         worktree: WorktreeResult {
+            warm: warm_placed(ws, &repo, &path, &outcome, warmth),
             repo: repo.entry.name.clone(),
             path,
             branch,

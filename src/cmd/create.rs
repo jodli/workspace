@@ -11,6 +11,7 @@ use crate::error::{Error, Exit, InputError, WorkspaceError};
 use crate::git::Rev;
 use crate::names::{BranchName, JiraKey, RepoName, SpaceName};
 use crate::space::{self, Meta, Purpose};
+use crate::warm::{self, WarmReport, Warmth};
 use crate::workspace::{Lock, Repo, Slot, Workspace, par_map};
 
 #[derive(Debug, Serialize)]
@@ -32,6 +33,22 @@ pub struct WorktreeResult {
     pub outcome: CreateOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fetch_error: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warm: Vec<WarmReport>,
+}
+
+/// Warm build dirs for a placed worktree, unless it failed or `--cold`.
+pub(crate) fn warm_placed(
+    ws: &Workspace,
+    repo: &Repo<'_>,
+    path: &Path,
+    outcome: &CreateOutcome,
+    warmth: Warmth,
+) -> Vec<WarmReport> {
+    if warmth == Warmth::Cold || matches!(outcome, CreateOutcome::Failed(_)) {
+        return Vec::new();
+    }
+    warm::warm(repo, &ws.config.warm, path)
 }
 
 #[derive(Debug, Serialize)]
@@ -61,8 +78,19 @@ impl Report for CreateReport {
     }
 }
 
-pub fn spike(ws: &Workspace, name: SpaceName, repos: &[RepoName]) -> Result<CreateReport, Error> {
-    create(ws, &Work::Spike(name), Meta::new(Purpose::Spike), repos)
+pub fn spike(
+    ws: &Workspace,
+    name: SpaceName,
+    repos: &[RepoName],
+    warmth: Warmth,
+) -> Result<CreateReport, Error> {
+    create(
+        ws,
+        &Work::Spike(name),
+        Meta::new(Purpose::Spike),
+        repos,
+        warmth,
+    )
 }
 
 pub fn start(
@@ -71,6 +99,7 @@ pub fn start(
     issue: IssueType,
     change: Option<ChangeType>,
     repos: &[RepoName],
+    warmth: Warmth,
 ) -> Result<CreateReport, Error> {
     let change = resolve(issue, change)?;
     let meta = Meta::new(Purpose::Ticket {
@@ -78,7 +107,7 @@ pub fn start(
         issue,
         change,
     });
-    create(ws, &Work::Ticket { key, change }, meta, repos)
+    create(ws, &Work::Ticket { key, change }, meta, repos, warmth)
 }
 
 fn create(
@@ -86,6 +115,7 @@ fn create(
     work: &Work,
     meta: Meta,
     repos: &[RepoName],
+    warmth: Warmth,
 ) -> Result<CreateReport, Error> {
     let lock = ws.lock()?;
     // Everything that can be checked is checked before the first change.
@@ -112,6 +142,7 @@ fn create(
         let (outcome, fetch_error) = place(&lock, repo, &path, &branch, Fetch::Yes)
             .unwrap_or_else(|e| (CreateOutcome::Failed(e.into()), None));
         WorktreeResult {
+            warm: warm_placed(ws, repo, &path, &outcome, warmth),
             repo: repo.entry.name.clone(),
             path,
             branch,

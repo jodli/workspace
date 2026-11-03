@@ -9,6 +9,7 @@ use ws::cmd::{self, Failure, Report};
 use ws::error::{Error, Exit, InputError};
 use ws::names::{BranchName, GitlabPath, JiraKey, RepoName, SpaceName};
 use ws::removal::{MergedProof, Safety};
+use ws::warm::Warmth;
 use ws::workspace::Workspace;
 
 /// Multi-repo worktree workspace for coding agents.
@@ -38,6 +39,9 @@ enum Cmd {
         name: SpaceName,
         #[arg(required = true)]
         repos: Vec<RepoName>,
+        /// Skip copying build dirs from another worktree.
+        #[arg(long)]
+        cold: bool,
     },
     /// New ticket space `spaces/<KEY>`: branch `<prefix>/<KEY>` in each repo,
     /// prefix from the issue type and the repo's style.
@@ -51,12 +55,18 @@ enum Cmd {
         change: Option<ChangeType>,
         #[arg(required = true)]
         repos: Vec<RepoName>,
+        /// Skip copying build dirs from another worktree.
+        #[arg(long)]
+        cold: bool,
     },
     /// Put an existing branch (local or on origin) into a space.
     Adopt {
         space: SpaceName,
         repo: RepoName,
         branch: BranchName,
+        /// Skip copying build dirs from another worktree.
+        #[arg(long)]
+        cold: bool,
     },
     /// Add GitLab projects to the roster and clone them.
     Add {
@@ -105,24 +115,39 @@ fn emit(report: &impl Report) -> Exit {
     report.exit()
 }
 
+fn warmth(cold: bool) -> Warmth {
+    if cold { Warmth::Cold } else { Warmth::Warm }
+}
+
 fn run(cmd: Cmd) -> Result<Exit, Error> {
     let mut ws = Workspace::discover()?;
     Ok(match cmd {
         Cmd::Sync => emit(&cmd::sync::sync(&ws)?),
         Cmd::List => emit(&cmd::list::list(&ws)?),
         Cmd::Status { space } => emit(&cmd::list::status(&ws, &space)?),
-        Cmd::Spike { name, repos } => emit(&cmd::create::spike(&ws, name, &repos)?),
+        Cmd::Spike { name, repos, cold } => {
+            emit(&cmd::create::spike(&ws, name, &repos, warmth(cold))?)
+        }
         Cmd::Start {
             key,
             issue,
             change,
             repos,
-        } => emit(&cmd::create::start(&ws, key, issue, change, &repos)?),
+            cold,
+        } => emit(&cmd::create::start(
+            &ws,
+            key,
+            issue,
+            change,
+            &repos,
+            warmth(cold),
+        )?),
         Cmd::Adopt {
             space,
             repo,
             branch,
-        } => emit(&cmd::adopt::adopt(&ws, space, &repo, branch)?),
+            cold,
+        } => emit(&cmd::adopt::adopt(&ws, space, &repo, branch, warmth(cold))?),
         Cmd::Add { paths, gitflow } => {
             let style = if gitflow {
                 PrefixStyle::Gitflow

@@ -1,3 +1,5 @@
+#![allow(dead_code)] // each test binary uses a different subset
+
 //! A throwaway workspace with one repo whose origin is a local bare repo.
 
 use std::error::Error;
@@ -54,7 +56,7 @@ impl Fixture {
         let root = base.join("ws");
         std::fs::create_dir_all(&seed)?;
         git(&seed, &["init", "--quiet", "-b", "main"])?;
-        commit(&seed, "README", "hello")?;
+        commit(&seed, ".gitignore", "target/\nnode_modules/\n")?;
         git(
             &base,
             &["init", "--quiet", "--bare", "-b", "main", "origin.git"],

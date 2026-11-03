@@ -5,6 +5,7 @@ use ws::branch::{ChangeType, IssueType};
 use ws::cmd::create::{CreateOutcome, spike, start};
 use ws::cmd::drop::{DropReport, drop};
 use ws::removal::{MergedProof, Safety};
+use ws::warm::Warmth;
 use ws::worktree::{Basis, Keep};
 
 fn repos() -> TestResult<Vec<ws::names::RepoName>> {
@@ -22,7 +23,7 @@ fn drop_with(f: &Fixture, space: &str, merged: &[String]) -> TestResult<DropRepo
 #[test]
 fn keeps_uncommitted_and_unpushed_work() -> TestResult {
     let f = Fixture::new()?;
-    spike(&f.ws()?, "s".parse()?, &repos()?)?;
+    spike(&f.ws()?, "s".parse()?, &repos()?, Warmth::Cold)?;
     let wt = f.worktree("s");
 
     std::fs::write(wt.join("scratch.txt"), "wip")?;
@@ -44,7 +45,7 @@ fn keeps_uncommitted_and_unpushed_work() -> TestResult {
 #[test]
 fn clean_fresh_space_goes_with_branch_and_notes_archived() -> TestResult {
     let f = Fixture::new()?;
-    spike(&f.ws()?, "s".parse()?, &repos()?)?;
+    spike(&f.ws()?, "s".parse()?, &repos()?, Warmth::Cold)?;
     let r = drop_with(&f, "s", &[])?;
     assert!(r.removal.space_removed);
     assert!(matches!(r.removal.removed[0].basis, Basis::Local));
@@ -63,7 +64,7 @@ fn clean_fresh_space_goes_with_branch_and_notes_archived() -> TestResult {
 #[test]
 fn pushed_but_unmerged_branch_survives_its_worktree() -> TestResult {
     let f = Fixture::new()?;
-    spike(&f.ws()?, "s".parse()?, &repos()?)?;
+    spike(&f.ws()?, "s".parse()?, &repos()?, Warmth::Cold)?;
     let wt = f.worktree("s");
     commit(&wt, "work.txt", "pushed")?;
     git(&wt, &["push", "--quiet", "-u", "origin", "spike/s"])?;
@@ -80,7 +81,7 @@ fn pushed_but_unmerged_branch_survives_its_worktree() -> TestResult {
 #[test]
 fn squash_merge_needs_proof_of_the_exact_head() -> TestResult {
     let f = Fixture::new()?;
-    spike(&f.ws()?, "s".parse()?, &repos()?)?;
+    spike(&f.ws()?, "s".parse()?, &repos()?, Warmth::Cold)?;
     let wt = f.worktree("s");
     let head = commit(&wt, "work.txt", "feature")?;
     git(&wt, &["push", "--quiet", "-u", "origin", "spike/s"])?;
@@ -109,14 +110,28 @@ fn squash_merge_needs_proof_of_the_exact_head() -> TestResult {
 fn start_is_idempotent_and_refuses_a_different_purpose() -> TestResult {
     let f = Fixture::new()?;
     let key: ws::names::JiraKey = "DEMO-1".parse()?;
-    let first = start(&f.ws()?, key.clone(), IssueType::Story, None, &repos()?)?;
+    let first = start(
+        &f.ws()?,
+        key.clone(),
+        IssueType::Story,
+        None,
+        &repos()?,
+        Warmth::Cold,
+    )?;
     assert_eq!(first.worktrees[0].branch.as_str(), "feat/DEMO-1");
     assert!(matches!(
         first.worktrees[0].outcome,
         CreateOutcome::Created { from_origin: true }
     ));
 
-    let again = start(&f.ws()?, key.clone(), IssueType::Story, None, &repos()?)?;
+    let again = start(
+        &f.ws()?,
+        key.clone(),
+        IssueType::Story,
+        None,
+        &repos()?,
+        Warmth::Cold,
+    )?;
     assert!(matches!(
         again.worktrees[0].outcome,
         CreateOutcome::Existing { .. }
@@ -129,6 +144,7 @@ fn start_is_idempotent_and_refuses_a_different_purpose() -> TestResult {
         IssueType::Task,
         Some(ChangeType::Chore),
         &repos()?,
+        Warmth::Cold,
     );
     assert!(other.is_err_and(|e| e.report().kind == "input.space_conflict"));
     Ok(())
@@ -140,8 +156,8 @@ fn start_is_idempotent_and_refuses_a_different_purpose() -> TestResult {
 fn prune_only_clears_landed_work() -> TestResult {
     use ws::cmd::prune::{Apply, WorktreeVerdict, prune};
     let f = Fixture::new()?;
-    spike(&f.ws()?, "open".parse()?, &repos()?)?;
-    spike(&f.ws()?, "landed".parse()?, &repos()?)?;
+    spike(&f.ws()?, "open".parse()?, &repos()?, Warmth::Cold)?;
+    spike(&f.ws()?, "landed".parse()?, &repos()?, Warmth::Cold)?;
     for space in ["open", "landed"] {
         let wt = f.worktree(space);
         commit(&wt, &format!("{space}.txt"), space)?;
