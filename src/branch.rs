@@ -196,7 +196,10 @@ mod tests {
             work.branch(PrefixStyle::Conventional).as_str(),
             "fix/DEMO-1"
         );
-        assert_eq!(work.branch(PrefixStyle::Gitflow).as_str(), "bugfix/DEMO-1");
+        assert_eq!(
+            work.branch(PrefixStyle::Gitflow).as_str(),
+            "bugfix/DEMO-1"
+        );
         let spike = Work::Spike("dep-audit".parse()?);
         assert_eq!(
             spike.branch(PrefixStyle::Gitflow).as_str(),
