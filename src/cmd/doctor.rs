@@ -1,15 +1,14 @@
 //! `ws doctor`: everything that has to hold before the other commands work.
 
 use std::net::{TcpStream, ToSocketAddrs};
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde::Serialize;
 
-use super::{Defaults, Report};
+use super::Report;
 use crate::error::{Error, Exit};
 use crate::git::Git;
-use crate::workspace::Workspace;
+use crate::workspace::{Canonical, Workspace, par_map};
 
 #[derive(Debug, Serialize)]
 pub struct DoctorReport {
@@ -27,11 +26,7 @@ pub struct Check {
 
 impl Report for DoctorReport {
     fn exit(&self) -> Exit {
-        if self.checks.iter().all(|c| c.ok) {
-            Exit::Ok
-        } else {
-            Exit::Incomplete
-        }
+        Exit::incomplete_if(self.checks.iter().any(|c| !c.ok))
     }
 }
 
@@ -44,21 +39,48 @@ fn check(name: &'static str, ok: bool, detail: impl Into<String>, hint: &'static
     }
 }
 
+/// Passes when nothing offends; the detail lists the offenders otherwise.
+fn none_of(
+    name: &'static str,
+    offenders: &[String],
+    ok_detail: String,
+    hint: &'static str,
+) -> Check {
+    let detail = if offenders.is_empty() {
+        ok_detail
+    } else {
+        offenders.join(", ")
+    };
+    check(name, offenders.is_empty(), detail, hint)
+}
+
 pub fn doctor(ws: &Workspace) -> Result<DoctorReport, Error> {
-    let mut checks = Vec::new();
-    let host = ws.config.gitlab.host.as_str();
-
-    checks.push(match Git::version() {
-        Ok(v) => check("git", true, v, ""),
-        Err(e) => check(
-            "git",
-            false,
-            e.to_string(),
-            "install git and put it on PATH",
-        ),
+    // The network checks can take seconds; the local ones run meanwhile.
+    let (network, local) = std::thread::scope(|s| {
+        let net = s.spawn(|| network(ws));
+        let local = local(ws);
+        (
+            net.join().unwrap_or_else(|e| std::panic::resume_unwind(e)),
+            local,
+        )
     });
+    let mut checks = local?;
+    checks.extend(network);
+    Ok(DoctorReport { checks })
+}
 
-    checks.extend(network(host));
+fn local(ws: &Workspace) -> Result<Vec<Check>, Error> {
+    let mut checks = vec![Git::version().map_or_else(
+        |e| {
+            check(
+                "git",
+                false,
+                e.to_string(),
+                "install git and put it on PATH",
+            )
+        },
+        |v| check("git", true, v, ""),
+    )];
 
     let missing: Vec<String> = ws
         .roster
@@ -66,35 +88,28 @@ pub fn doctor(ws: &Workspace) -> Result<DoctorReport, Error> {
         .filter(|e| ws.repo(e).is_none())
         .map(|e| e.name.to_string())
         .collect();
-    checks.push(check(
+    checks.push(none_of(
         "repos_cloned",
-        missing.is_empty(),
-        if missing.is_empty() {
-            format!("{} repos", ws.roster.iter().count())
-        } else {
-            format!("missing: {}", missing.join(", "))
-        },
+        &missing,
+        format!("{} repos", ws.roster.iter().count()),
         "`ws sync` clones them",
     ));
 
-    let mut defaults = Defaults::default();
-    let mut off: Vec<String> = Vec::new();
-    for repo in ws.repos() {
-        let default = defaults.of(&repo)?;
-        let on_default = repo.git.head_branch()?.as_ref() == Some(&default);
-        if !on_default || repo.git.changes()?.tracked > 0 {
-            off.push(repo.entry.name.to_string());
-        }
-    }
-    checks.push(check(
+    let repos: Vec<_> = ws.repos().collect();
+    let off: Vec<String> = par_map(&repos, |r| {
+        r.facts().map(|f| (r.entry.name.to_string(), f.canonical))
+    })
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()?
+    .into_iter()
+    .filter(|(_, c)| *c != Canonical::Ok)
+    .map(|(name, c)| format!("{name}: {c:?}"))
+    .collect();
+    checks.push(none_of(
         "repos_canonical",
-        off.is_empty(),
-        if off.is_empty() {
-            "all on a clean default branch".to_owned()
-        } else {
-            format!("not clean on default: {}", off.join(", "))
-        },
-        "move the work into a space with `ws adopt`, then the repo is restored",
+        &off,
+        "all on a clean default branch".to_owned(),
+        "move work into a space with `ws adopt`; that also restores the repo",
     ));
 
     let legacy = ws.root.join("spikes");
@@ -102,28 +117,14 @@ pub fn doctor(ws: &Workspace) -> Result<DoctorReport, Error> {
         "no_legacy_spikes_dir",
         !legacy.exists(),
         legacy.display().to_string(),
-        "move each worktree with `git worktree move` into spaces/, then remove spikes/",
+        "move each worktree into spaces/ (see the ws skill), then remove spikes/",
     ));
-
-    if cfg!(windows) {
-        let on = Git::at(&ws.root)
-            .config_get("core.longpaths")
-            .ok()
-            .flatten()
-            .is_some_and(|v| v == "true");
-        checks.push(check(
-            "git_longpaths",
-            on,
-            "core.longpaths",
-            "git config --global core.longpaths true",
-        ));
-    }
-
-    Ok(DoctorReport { checks })
+    Ok(checks)
 }
 
 /// Reachability first: without it the ssh check would only time out.
-fn network(host: &str) -> Vec<Check> {
+fn network(ws: &Workspace) -> Vec<Check> {
+    let host = ws.config.gitlab.host.as_str();
     let reachable = (host, 22)
         .to_socket_addrs()
         .ok()
@@ -135,33 +136,18 @@ fn network(host: &str) -> Vec<Check> {
         format!("{host}:22"),
         "check network access to gitlab.host in ws.toml",
     )];
-
-    if reachable {
-        let ssh = Command::new("ssh")
-            .args([
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=8",
-                "-T",
-                &format!("git@{host}"),
-            ])
-            .stdin(Stdio::null())
-            .output();
-        let welcomed = ssh.as_ref().is_ok_and(|o| {
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&o.stdout),
-                String::from_utf8_lossy(&o.stderr)
-            );
-            text.to_lowercase().contains("welcome")
+    // Through git, so it tests the ssh setup git actually uses.
+    if reachable && let Some(entry) = ws.roster.iter().next() {
+        let url = ws.config.gitlab.ssh_url(&entry.gitlab);
+        checks.push(match Git::ls_remote(&url) {
+            Ok(()) => check("gitlab_ssh", true, url, ""),
+            Err(e) => check(
+                "gitlab_ssh",
+                false,
+                e.to_string(),
+                "load an ssh key that GitLab accepts into the agent",
+            ),
         });
-        checks.push(check(
-            "gitlab_ssh",
-            welcomed,
-            format!("ssh git@{host}"),
-            "load an ssh key that GitLab accepts into the agent",
-        ));
     }
     checks
 }

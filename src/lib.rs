@@ -16,3 +16,4 @@ pub mod names;
 pub mod roster;
 pub mod space;
 pub mod workspace;
+pub mod worktree;

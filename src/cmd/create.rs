@@ -1,16 +1,17 @@
 //! `ws spike` and `ws start`: create a space with one worktree per repo.
 //! Re-running is safe: existing worktrees are reported, missing ones added.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use super::{Defaults, Failure, Report};
+use super::{Failure, Report};
 use crate::branch::{ChangeType, IssueType, Work, resolve};
 use crate::error::{Error, Exit, InputError, WorkspaceError};
+use crate::git::Rev;
 use crate::names::{BranchName, JiraKey, RepoName, SpaceName};
-use crate::space::{self, Meta};
-use crate::workspace::{Repo, Workspace, canonical};
+use crate::space::{self, Meta, Purpose};
+use crate::workspace::{Lock, Repo, Slot, Workspace, par_map};
 
 #[derive(Debug, Serialize)]
 pub struct CreateReport {
@@ -36,12 +37,14 @@ pub struct WorktreeResult {
 #[derive(Debug, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum CreateOutcome {
+    /// New branch from the default branch on origin, or from the local HEAD
+    /// of `repos/<repo>` when origin has none.
     Created {
-        base: String,
+        from_origin: bool,
     },
     /// The branch already existed locally and was checked out as is.
     ReusedBranch,
-    /// The worktree was already there. `branch` is what it has checked out.
+    /// The worktree was already there, with this branch checked out.
     Existing {
         checked_out: Option<BranchName>,
     },
@@ -50,23 +53,16 @@ pub enum CreateOutcome {
 
 impl Report for CreateReport {
     fn exit(&self) -> Exit {
-        if self
-            .worktrees
-            .iter()
-            .any(|w| matches!(w.outcome, CreateOutcome::Failed(_)))
-        {
-            Exit::Incomplete
-        } else {
-            Exit::Ok
-        }
+        Exit::incomplete_if(
+            self.worktrees
+                .iter()
+                .any(|w| matches!(w.outcome, CreateOutcome::Failed(_))),
+        )
     }
 }
 
 pub fn spike(ws: &Workspace, name: SpaceName, repos: &[RepoName]) -> Result<CreateReport, Error> {
-    let meta = Meta::Spike {
-        created: space::today(),
-    };
-    create(ws, &Work::Spike(name), meta, repos)
+    create(ws, &Work::Spike(name), Meta::new(Purpose::Spike), repos)
 }
 
 pub fn start(
@@ -77,12 +73,11 @@ pub fn start(
     repos: &[RepoName],
 ) -> Result<CreateReport, Error> {
     let change = resolve(issue, change)?;
-    let meta = Meta::Ticket {
+    let meta = Meta::new(Purpose::Ticket {
         ticket: key.clone(),
         issue,
         change,
-        created: space::today(),
-    };
+    });
     create(ws, &Work::Ticket { key, change }, meta, repos)
 }
 
@@ -92,7 +87,7 @@ fn create(
     meta: Meta,
     repos: &[RepoName],
 ) -> Result<CreateReport, Error> {
-    let _lock = ws.lock()?;
+    let lock = ws.lock()?;
     // Everything that can be checked is checked before the first change.
     let repos: Vec<Repo<'_>> = repos
         .iter()
@@ -101,7 +96,7 @@ fn create(
     let space = work.space();
     let dir = ws.space_dir(&space);
     if let Some(existing) = space::read_meta(&dir)?
-        && !existing.same_work(&meta)
+        && existing.purpose != meta.purpose
     {
         return Err(InputError::SpaceConflict {
             space,
@@ -110,44 +105,20 @@ fn create(
         .into());
     }
     std::fs::create_dir_all(&dir).map_err(Error::io(&dir))?;
-    let registered = space::registered(ws)?;
-    let mut defaults = Defaults::default();
 
-    let mut worktrees = Vec::new();
-    for repo in &repos {
+    let worktrees = par_map(&repos, |repo| {
         let path = dir.join(&repo.entry.name);
         let branch = work.branch(repo.entry.style);
-        let mut fetch_error = None;
-        let outcome = if path.exists() {
-            match registered.get(&canonical(&path)) {
-                Some(f) if f.repo == repo.entry.name => CreateOutcome::Existing {
-                    checked_out: f.entry.branch.clone(),
-                },
-                _ => CreateOutcome::Failed(
-                    Error::from(WorkspaceError::Occupied {
-                        repo: repo.entry.name.clone(),
-                        path: path.clone(),
-                    })
-                    .into(),
-                ),
-            }
-        } else {
-            // A failed fetch is not fatal: the worktree starts from the last
-            // known state and the report says so.
-            if let Err(e) = repo.git.fetch() {
-                fetch_error = Some(e.to_string());
-            }
-            add_worktree(repo, &mut defaults, &path, &branch)
-                .unwrap_or_else(|e| CreateOutcome::Failed(e.into()))
-        };
-        worktrees.push(WorktreeResult {
+        let (outcome, fetch_error) = place(&lock, repo, &path, &branch, Fetch::Yes)
+            .unwrap_or_else(|e| (CreateOutcome::Failed(e.into()), None));
+        WorktreeResult {
             repo: repo.entry.name.clone(),
             path,
             branch,
             outcome,
             fetch_error,
-        });
-    }
+        }
+    });
 
     let notes_created = space::scaffold(&dir, &space, &meta)?;
     Ok(CreateReport {
@@ -160,23 +131,58 @@ fn create(
     })
 }
 
-fn add_worktree(
+/// Whether `place` fetches before adding a worktree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Fetch {
+    Yes,
+    /// The caller fetched already.
+    Done,
+}
+
+/// Puts `branch` of `repo` at `path` unless it is there already. Shared with
+/// `adopt`, which passes a branch that must exist.
+pub(crate) fn place(
+    lock: &Lock,
     repo: &Repo<'_>,
-    defaults: &mut Defaults,
-    path: &std::path::Path,
+    path: &Path,
     branch: &BranchName,
-) -> Result<CreateOutcome, Error> {
-    if repo.git.ref_exists(&format!("refs/heads/{branch}"))? {
-        repo.git.worktree_add_existing(path, branch)?;
-        return Ok(CreateOutcome::ReusedBranch);
+    fetch: Fetch,
+) -> Result<(CreateOutcome, Option<String>), Error> {
+    match repo.slot(path)? {
+        Slot::Ours(entry) => {
+            return Ok((
+                CreateOutcome::Existing {
+                    checked_out: entry.branch,
+                },
+                None,
+            ));
+        }
+        Slot::Occupied => {
+            return Err(WorkspaceError::Occupied {
+                repo: repo.entry.name.clone(),
+                path: path.to_owned(),
+            }
+            .into());
+        }
+        Slot::Free => {}
     }
-    let default = defaults.of(repo)?;
-    let remote = format!("origin/{default}");
-    let base = if repo.git.ref_exists(&format!("refs/remotes/{remote}"))? {
-        remote
-    } else {
-        "HEAD".to_owned()
+    // A failed fetch is not fatal: the worktree starts from the last known
+    // state and the report says so.
+    let fetch_error = match fetch {
+        Fetch::Yes => repo.git.fetch(lock).err().map(|e| e.to_string()),
+        Fetch::Done => None,
     };
-    repo.git.worktree_add_new(path, branch, &base)?;
-    Ok(CreateOutcome::Created { base })
+    if repo.git.has(Rev::Local(branch))? {
+        repo.git.worktree_add(lock, path, branch, None)?;
+        return Ok((CreateOutcome::ReusedBranch, fetch_error));
+    }
+    let default = repo.default_branch()?;
+    let from_origin = repo.git.has(Rev::Origin(&default))?;
+    let base = if from_origin {
+        Rev::Origin(&default)
+    } else {
+        Rev::Head
+    };
+    repo.git.worktree_add(lock, path, branch, Some(base))?;
+    Ok((CreateOutcome::Created { from_origin }, fetch_error))
 }

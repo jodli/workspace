@@ -28,7 +28,7 @@ pub fn add(
     paths: &[GitlabPath],
     style: PrefixStyle,
 ) -> Result<AddReport, Error> {
-    let _lock = ws.lock()?;
+    let lock = ws.lock()?;
     let mut added = Vec::new();
     let mut already = Vec::new();
     for path in paths {
@@ -48,8 +48,8 @@ pub fn add(
         ws.roster.append(entry.clone())?;
         added.push(entry);
     }
-    let names: Vec<&RepoName> = added.iter().map(|e| &e.name).collect();
-    let sync = sync_entries(ws, ws.roster.iter().filter(|e| names.contains(&&e.name)))?;
+    let entries: Vec<&RepoEntry> = added.iter().collect();
+    let sync = sync_entries(ws, &lock, &entries)?;
     Ok(AddReport {
         added,
         already,

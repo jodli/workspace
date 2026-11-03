@@ -57,12 +57,17 @@ pub enum Fallback {
 impl Config {
     pub fn load(path: &Path) -> Result<Self, Error> {
         let text = std::fs::read_to_string(path).map_err(Error::io(path))?;
-        toml::from_str(&text).map_err(|e| {
-            WorkspaceError::Config {
-                path: path.to_owned(),
-                message: e.message().to_owned(),
-            }
-            .into()
-        })
+        parse_toml(path, &text)
     }
+}
+
+/// TOML from a workspace file, with the file named in the error.
+pub fn parse_toml<T: serde::de::DeserializeOwned>(path: &Path, text: &str) -> Result<T, Error> {
+    toml::from_str(text).map_err(|e| {
+        WorkspaceError::Config {
+            path: path.to_owned(),
+            message: e.message().to_owned(),
+        }
+        .into()
+    })
 }

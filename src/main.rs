@@ -4,8 +4,8 @@ use clap::{ColorChoice, Parser, Subcommand};
 use serde::Serialize;
 
 use ws::branch::{ChangeType, IssueType, PrefixStyle};
-use ws::cmd::{self, Report};
-use ws::error::{Error, ErrorReport, Exit, InputError};
+use ws::cmd::{self, Failure, Report};
+use ws::error::{Error, Exit, InputError};
 use ws::names::{BranchName, GitlabPath, JiraKey, RepoName, SpaceName};
 use ws::workspace::Workspace;
 
@@ -68,11 +68,6 @@ enum Cmd {
     Doctor,
 }
 
-#[derive(Serialize)]
-struct ErrorOut {
-    error: ErrorReport,
-}
-
 fn print_json(value: &impl Serialize) {
     match serde_json::to_string(value) {
         Ok(s) => println!("{s}"),
@@ -128,17 +123,16 @@ fn main() -> ExitCode {
         }
         Err(e) => {
             let err = Error::from(InputError::Usage(e.render().to_string().trim().to_owned()));
-            print_json(&ErrorOut {
-                error: err.report(),
-            });
-            return err.exit().into();
+            print_json(&Failure::from(err));
+            return Exit::Input.into();
         }
     };
     match run(cli.cmd) {
         Ok(exit) => exit.into(),
         Err(e) => {
-            print_json(&ErrorOut { error: e.report() });
-            e.exit().into()
+            let exit = e.exit();
+            print_json(&Failure::from(e));
+            exit.into()
         }
     }
 }

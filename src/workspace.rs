@@ -1,13 +1,17 @@
 //! The workspace root and everything addressed relative to it.
 
+use std::collections::HashMap;
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+use serde::Serialize;
 
 use crate::config::Config;
 use crate::error::{Error, WorkspaceError};
-use crate::git::Git;
-use crate::names::{RepoName, SpaceName};
+use crate::git::{Git, Rev, Untracked, WorktreeEntry};
+use crate::names::{BranchName, RepoName, SpaceName};
 use crate::roster::{RepoEntry, Roster};
 
 pub const CONFIG_FILE: &str = "ws.toml";
@@ -20,19 +24,49 @@ pub struct Workspace {
     pub root: PathBuf,
     pub config: Config,
     pub roster: Roster,
+    defaults: Mutex<HashMap<RepoName, BranchName>>,
 }
+
+/// Proof that the workspace lock is held. Only `Workspace::lock` makes one,
+/// and every mutating git call asks for it.
+#[derive(Debug)]
+pub struct Lock(#[allow(dead_code)] File);
 
 /// A roster repo that is cloned.
 #[derive(Debug, Clone)]
 pub struct Repo<'w> {
     pub entry: &'w RepoEntry,
-    pub dir: PathBuf,
     pub git: Git,
+    ws: &'w Workspace,
 }
 
-/// Held while a command mutates the workspace. Released on drop.
-#[derive(Debug)]
-pub struct Lock(#[allow(dead_code)] File);
+/// Whether `repos/<repo>` is the clean default-branch checkout it must be.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Canonical {
+    Ok,
+    NotOnDefault { branch: Option<BranchName> },
+    Uncommitted { tracked: usize },
+    Ahead { commits: usize },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoFacts {
+    pub default_branch: BranchName,
+    pub branch: Option<BranchName>,
+    pub canonical: Canonical,
+    pub behind: usize,
+}
+
+/// What occupies `spaces/<space>/<repo>`.
+#[derive(Debug, Clone)]
+pub enum Slot {
+    Free,
+    /// A worktree of this repo.
+    Ours(WorktreeEntry),
+    /// Something else. ws never touches it.
+    Occupied,
+}
 
 impl Workspace {
     /// `WS_ROOT` if set, else the nearest parent of the current directory
@@ -59,6 +93,7 @@ impl Workspace {
         Ok(Self {
             config: Config::load(&config_path)?,
             roster: Roster::load(&root.join(ROSTER_FILE))?,
+            defaults: Mutex::default(),
             root,
         })
     }
@@ -88,8 +123,8 @@ impl Workspace {
         let dir = self.repo_dir(&entry.name);
         dir.join(".git").exists().then(|| Repo {
             entry,
-            git: Git::at(&dir),
-            dir,
+            git: Git::at(dir),
+            ws: self,
         })
     }
 
@@ -132,6 +167,71 @@ impl Workspace {
     }
 }
 
+impl Repo<'_> {
+    pub fn dir(&self) -> PathBuf {
+        self.ws.repo_dir(&self.entry.name)
+    }
+
+    /// Asked once per repo and run.
+    pub fn default_branch(&self) -> Result<BranchName, Error> {
+        let cached = self
+            .ws
+            .defaults
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&self.entry.name).cloned());
+        if let Some(b) = cached {
+            return Ok(b);
+        }
+        let b = self.git.default_branch()?;
+        if let Ok(mut m) = self.ws.defaults.lock() {
+            m.insert(self.entry.name.clone(), b.clone());
+        }
+        Ok(b)
+    }
+
+    pub fn facts(&self) -> Result<RepoFacts, Error> {
+        let default_branch = self.default_branch()?;
+        let status = self.git.status(Untracked::Skip)?;
+        let (ahead, behind) = self.git.ahead_behind(Rev::Origin(&default_branch))?;
+        // Untracked files do not count: they block nothing and sync's
+        // fast-forward refuses by itself if one would be overwritten.
+        let canonical = if status.branch.as_ref() != Some(&default_branch) {
+            Canonical::NotOnDefault {
+                branch: status.branch.clone(),
+            }
+        } else if status.changes.tracked > 0 {
+            Canonical::Uncommitted {
+                tracked: status.changes.tracked,
+            }
+        } else if ahead > 0 {
+            Canonical::Ahead { commits: ahead }
+        } else {
+            Canonical::Ok
+        };
+        Ok(RepoFacts {
+            branch: status.branch,
+            default_branch,
+            canonical,
+            behind,
+        })
+    }
+
+    /// What is at `path`, from this repo's point of view.
+    pub fn slot(&self, path: &Path) -> Result<Slot, Error> {
+        if !path.exists() {
+            return Ok(Slot::Free);
+        }
+        let want = canonical(path);
+        Ok(self
+            .git
+            .worktrees()?
+            .into_iter()
+            .find(|w| canonical(&w.path) == want)
+            .map_or(Slot::Occupied, Slot::Ours))
+    }
+}
+
 /// The nearest directory at or above `from` that has a `ws.toml`.
 pub fn find_root(from: &Path) -> Option<PathBuf> {
     from.ancestors()
@@ -143,4 +243,23 @@ pub fn find_root(from: &Path) -> Option<PathBuf> {
 /// does not exist (git keeps worktrees registered after their dir is gone).
 pub fn canonical(path: &Path) -> PathBuf {
     dunce::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+}
+
+/// Runs `f` over `items` on up to 8 threads, keeping order. For independent
+/// per-repo and per-worktree work, which is mostly waiting on git.
+pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get().min(8));
+    let chunk = items.len().div_ceil(threads).max(1);
+    std::thread::scope(|s| {
+        let handles: Vec<_> = items
+            .chunks(chunk)
+            .map(|part| s.spawn(|| part.iter().map(&f).collect::<Vec<R>>()))
+            .collect();
+        handles
+            .into_iter()
+            // A panicking closure is a bug: surface it instead of returning
+            // fewer results than items.
+            .flat_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    })
 }

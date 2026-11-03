@@ -23,6 +23,12 @@ pub enum Exit {
     Io = 6,
 }
 
+impl Exit {
+    pub fn incomplete_if(partial: bool) -> Self {
+        if partial { Self::Incomplete } else { Self::Ok }
+    }
+}
+
 impl From<Exit> for std::process::ExitCode {
     fn from(e: Exit) -> Self {
         Self::from(e as u8)
@@ -54,7 +60,7 @@ pub enum InputError {
     MergedProof(String),
     #[error("'{0}' is not in the roster")]
     UnknownRepo(RepoName),
-    #[error("space '{space}' already exists as {}", existing.describe())]
+    #[error("space '{space}' already exists as {}", existing.purpose.describe())]
     SpaceConflict {
         space: SpaceName,
         existing: Box<crate::space::Meta>,
