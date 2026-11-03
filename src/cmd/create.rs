@@ -142,7 +142,7 @@ fn create(
         let (outcome, fetch_error) = place(&lock, repo, &path, &branch, Fetch::Yes)
             .unwrap_or_else(|e| (CreateOutcome::Failed(e.into()), None));
         WorktreeResult {
-            warm: warm_placed(ws, repo, &path, &outcome, warmth),
+            warm: Vec::new(),
             repo: repo.entry.name.clone(),
             path,
             branch,
@@ -152,6 +152,13 @@ fn create(
     });
 
     let notes_created = space::scaffold(&dir, &space, &meta)?;
+    // Warm copies only write ignored dirs inside the new worktrees, and a
+    // full copy can take minutes: other agents should not wait for it.
+    drop(lock);
+    let mut worktrees = worktrees;
+    for (wt, repo) in worktrees.iter_mut().zip(&repos) {
+        wt.warm = warm_placed(ws, repo, &wt.path, &wt.outcome, warmth);
+    }
     Ok(CreateReport {
         notes: dir.join(space::NOTES_FILE),
         space,

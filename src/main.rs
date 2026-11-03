@@ -25,6 +25,19 @@ struct Cli {
     cmd: Cmd,
 }
 
+#[derive(Debug, clap::Args)]
+struct WarmArgs {
+    /// Skip copying build dirs (warm.dirs) from another worktree of the repo.
+    #[arg(long)]
+    cold: bool,
+}
+
+impl From<WarmArgs> for Warmth {
+    fn from(a: WarmArgs) -> Self {
+        if a.cold { Self::Cold } else { Self::Warm }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum Cmd {
     /// Clone missing roster repos, fetch, fast-forward default branches.
@@ -39,9 +52,8 @@ enum Cmd {
         name: SpaceName,
         #[arg(required = true)]
         repos: Vec<RepoName>,
-        /// Skip copying build dirs from another worktree.
-        #[arg(long)]
-        cold: bool,
+        #[command(flatten)]
+        warm: WarmArgs,
     },
     /// New ticket space `spaces/<KEY>`: branch `<prefix>/<KEY>` in each repo,
     /// prefix from the issue type and the repo's style.
@@ -55,18 +67,16 @@ enum Cmd {
         change: Option<ChangeType>,
         #[arg(required = true)]
         repos: Vec<RepoName>,
-        /// Skip copying build dirs from another worktree.
-        #[arg(long)]
-        cold: bool,
+        #[command(flatten)]
+        warm: WarmArgs,
     },
     /// Put an existing branch (local or on origin) into a space.
     Adopt {
         space: SpaceName,
         repo: RepoName,
         branch: BranchName,
-        /// Skip copying build dirs from another worktree.
-        #[arg(long)]
-        cold: bool,
+        #[command(flatten)]
+        warm: WarmArgs,
     },
     /// Add GitLab projects to the roster and clone them.
     Add {
@@ -115,39 +125,35 @@ fn emit(report: &impl Report) -> Exit {
     report.exit()
 }
 
-fn warmth(cold: bool) -> Warmth {
-    if cold { Warmth::Cold } else { Warmth::Warm }
-}
-
 fn run(cmd: Cmd) -> Result<Exit, Error> {
     let mut ws = Workspace::discover()?;
     Ok(match cmd {
         Cmd::Sync => emit(&cmd::sync::sync(&ws)?),
         Cmd::List => emit(&cmd::list::list(&ws)?),
         Cmd::Status { space } => emit(&cmd::list::status(&ws, &space)?),
-        Cmd::Spike { name, repos, cold } => {
-            emit(&cmd::create::spike(&ws, name, &repos, warmth(cold))?)
+        Cmd::Spike { name, repos, warm } => {
+            emit(&cmd::create::spike(&ws, name, &repos, warm.into())?)
         }
         Cmd::Start {
             key,
             issue,
             change,
             repos,
-            cold,
+            warm,
         } => emit(&cmd::create::start(
             &ws,
             key,
             issue,
             change,
             &repos,
-            warmth(cold),
+            warm.into(),
         )?),
         Cmd::Adopt {
             space,
             repo,
             branch,
-            cold,
-        } => emit(&cmd::adopt::adopt(&ws, space, &repo, branch, warmth(cold))?),
+            warm,
+        } => emit(&cmd::adopt::adopt(&ws, space, &repo, branch, warm.into())?),
         Cmd::Add { paths, gitflow } => {
             let style = if gitflow {
                 PrefixStyle::Gitflow

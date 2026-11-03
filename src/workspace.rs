@@ -245,15 +245,25 @@ pub fn canonical(path: &Path) -> PathBuf {
     dunce::canonicalize(path).unwrap_or_else(|_| path.to_owned())
 }
 
-/// Runs `f` over `items` on up to 8 threads, keeping order. For independent
-/// per-repo and per-worktree work, which is mostly waiting on git.
+/// Runs `f` over `items` on up to 8 threads, keeping order. Threads take
+/// the next unclaimed item, so a few slow items do not stall one thread with
+/// a fixed share. For independent per-repo, per-worktree and per-file work.
 pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get().min(8));
-    let chunk = items.len().div_ceil(threads).max(1);
-    std::thread::scope(|s| {
-        let handles: Vec<_> = items
-            .chunks(chunk)
-            .map(|part| s.spawn(|| part.iter().map(&f).collect::<Vec<R>>()))
+    let next = AtomicUsize::new(0);
+    let mut out: Vec<(usize, R)> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads.min(items.len()))
+            .map(|_| {
+                s.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(i) else { break done };
+                        done.push((i, f(item)));
+                    }
+                })
+            })
             .collect();
         handles
             .into_iter()
@@ -261,5 +271,7 @@ pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec
             // fewer results than items.
             .flat_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
             .collect()
-    })
+    });
+    out.sort_unstable_by_key(|(i, _)| *i);
+    out.into_iter().map(|(_, r)| r).collect()
 }

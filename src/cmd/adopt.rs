@@ -80,10 +80,12 @@ pub fn adopt(
             branch: branch.clone(),
         }),
     )?;
+    drop(lock);
+    let warm = warm_placed(ws, &repo, &path, &outcome, warmth);
     Ok(AdoptReport {
         space,
         worktree: WorktreeResult {
-            warm: warm_placed(ws, &repo, &path, &outcome, warmth),
+            warm,
             repo: repo.entry.name.clone(),
             path,
             branch,

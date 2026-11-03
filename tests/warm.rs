@@ -2,8 +2,17 @@ mod common;
 
 use common::{Fixture, REPO, TestResult};
 use filetime::FileTime;
+use ws::cmd::create::CreateReport;
 use ws::cmd::create::spike;
 use ws::warm::{Skip, WarmOutcome, Warmth};
+
+fn target(report: &CreateReport) -> Option<&WarmOutcome> {
+    report.worktrees[0]
+        .warm
+        .iter()
+        .find(|w| w.dir.as_str() == "target")
+        .map(|w| &w.outcome)
+}
 
 // Cargo decides freshness by mtimes, and node_modules relies on symlinks; a
 // warm copy that loses either is a cold build in disguise.
@@ -22,12 +31,8 @@ fn copies_build_dirs_with_mtimes_and_links_once() -> TestResult {
     std::os::unix::fs::symlink("deps/libx.rlib", built.join("debug/link"))?;
 
     let report = spike(&f.ws()?, "b".parse()?, &repos, Warmth::Warm)?;
-    let target_report = report.worktrees[0]
-        .warm
-        .iter()
-        .find(|w| w.dir.as_str() == "target");
     assert!(matches!(
-        target_report.map(|w| &w.outcome),
+        target(&report),
         Some(WarmOutcome::Copied { files: 1, .. })
     ));
 
@@ -45,12 +50,8 @@ fn copies_build_dirs_with_mtimes_and_links_once() -> TestResult {
     assert!(!f.worktree("b").join("target.ws-warm").exists());
 
     let again = spike(&f.ws()?, "b".parse()?, &repos, Warmth::Warm)?;
-    let target_again = again.worktrees[0]
-        .warm
-        .iter()
-        .find(|w| w.dir.as_str() == "target");
     assert!(matches!(
-        target_again.map(|w| &w.outcome),
+        target(&again),
         Some(WarmOutcome::Skipped { why: Skip::Exists })
     ));
     Ok(())
