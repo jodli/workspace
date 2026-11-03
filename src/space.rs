@@ -13,7 +13,7 @@ use crate::branch::{ChangeType, IssueType};
 use crate::config::parse_toml;
 use crate::error::{Error, WorkspaceError};
 use crate::git::WorktreeEntry;
-use crate::names::{BranchName, JiraKey, RepoName, SpaceName};
+use crate::names::{BranchName, RepoName, SpaceName, TicketKey};
 use crate::workspace::{Workspace, canonical, par_map};
 
 pub const NOTES_FILE: &str = "SPACE.md";
@@ -32,12 +32,12 @@ pub struct Meta {
 pub enum Purpose {
     Spike,
     Ticket {
-        ticket: JiraKey,
+        ticket: TicketKey,
         issue: IssueType,
         change: ChangeType,
         /// The parent ticket, for sub-tasks.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        parent: Option<JiraKey>,
+        parent: Option<TicketKey>,
     },
     /// An existing branch pulled into a space, e.g. to review an MR.
     Adopted {

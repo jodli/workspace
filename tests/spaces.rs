@@ -109,7 +109,7 @@ fn squash_merge_needs_proof_of_the_exact_head() -> TestResult {
 #[test]
 fn start_is_idempotent_and_refuses_a_different_purpose() -> TestResult {
     let f = Fixture::new()?;
-    let key: ws::names::JiraKey = "DEMO-1".parse()?;
+    let key: ws::names::TicketKey = "DEMO-1".parse()?;
     let first = start(
         &f.ws()?,
         key.clone(),

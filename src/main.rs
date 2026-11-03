@@ -8,7 +8,7 @@ use ws::cmd::prune::Apply;
 use ws::cmd::{self, Failure, Report};
 use ws::error::{Error, Exit, InputError};
 use ws::guard;
-use ws::names::{BranchName, GitlabPath, JiraKey, RepoName, SpaceName};
+use ws::names::{BranchName, GitlabPath, RepoName, SpaceName, TicketKey};
 use ws::removal::{MergedProof, Safety};
 use ws::warm::Warmth;
 use ws::workspace::Workspace;
@@ -59,8 +59,8 @@ enum Cmd {
     /// New ticket space `spaces/<KEY>`: branch `<prefix>/<KEY>` in each repo,
     /// prefix from the issue type and the repo's style.
     Start {
-        key: JiraKey,
-        /// Jira issue type. For a sub-task, pass the parent's type.
+        key: TicketKey,
+        /// Ticket type. For a sub-task, pass the parent's type.
         #[arg(long, value_enum)]
         issue: IssueType,
         /// Required for tasks; must match for bugs (fix) and stories (feat).
@@ -68,7 +68,7 @@ enum Cmd {
         change: Option<ChangeType>,
         /// The parent ticket, when KEY is a sub-task. Recorded in SPACE.md.
         #[arg(long)]
-        parent: Option<JiraKey>,
+        parent: Option<TicketKey>,
         #[arg(required = true)]
         repos: Vec<RepoName>,
         #[command(flatten)]

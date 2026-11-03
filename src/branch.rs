@@ -1,19 +1,21 @@
-//! From a Jira issue type to a branch name.
+//! From a ticket type to a branch name.
 //!
-//! The agent reads the issue in Jira and passes its type; this module owns the
+//! The agent reads the ticket in its tracker and passes the type; this module owns the
 //! rule of what that type means for the branch.
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::InputError;
-use crate::names::{BranchName, JiraKey, SpaceName};
+use crate::names::{BranchName, SpaceName, TicketKey};
 
-/// Jira issue types as the agent reports them. `SubTask` and `Epic` exist so
+/// Ticket types as the agent reports them, in the common names trackers use. `SubTask` and `Epic` exist so
 /// they can be refused with a precise hint instead of a generic parse error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum IssueType {
     Bug,
+    /// Product-driven work; trackers call it story or feature.
+    #[value(alias = "feature")]
     Story,
     Task,
     // Hidden from --help but still parsed, so passing them gets the
@@ -125,7 +127,7 @@ pub fn resolve(issue: IssueType, change: Option<ChangeType>) -> Result<ChangeTyp
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Work {
     Spike(SpaceName),
-    Ticket { key: JiraKey, change: ChangeType },
+    Ticket { key: TicketKey, change: ChangeType },
 }
 
 impl Work {

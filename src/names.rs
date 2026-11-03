@@ -71,7 +71,7 @@ fn is_segment(s: &str) -> bool {
 }
 
 name_type!(
-    /// Directory name under `spaces/`. Ticket spaces use the Jira key verbatim.
+    /// Directory name under `spaces/`. Ticket spaces use the ticket key verbatim.
     SpaceName,
     "space name",
     is_segment,
@@ -95,22 +95,14 @@ name_type!(
 );
 
 name_type!(
-    /// Jira issue key, e.g. `DEMO-1`.
-    JiraKey,
-    "jira key",
-    |s| {
-        let Some((project, number)) = s.split_once('-') else {
-            return false;
-        };
-        let mut p = project.chars();
-        p.next().is_some_and(|c| c.is_ascii_uppercase())
-            && project.len() >= 2
-            && p.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-            && !number.is_empty()
-            && !number.starts_with('0')
-            && number.chars().all(|c| c.is_ascii_digit())
-    },
-    "PROJECT-123: uppercase project key, dash, number"
+    /// A ticket id from any tracker: a `PROJ-123` style key or a bare
+    /// issue number like `123`. It names the space and ends the
+    /// branch, so it must be a path segment; the digit keeps a ticket title
+    /// from being passed by mistake.
+    TicketKey,
+    "ticket key",
+    |s| is_segment(s) && s.chars().any(|c| c.is_ascii_digit()),
+    "the tracker's ticket id, e.g. PROJ-123 or 123"
 );
 
 name_type!(
@@ -171,7 +163,7 @@ impl BranchLeaf for SpaceName {
     }
 }
 
-impl BranchLeaf for JiraKey {
+impl BranchLeaf for TicketKey {
     fn leaf(&self) -> &str {
         &self.0
     }
@@ -205,9 +197,9 @@ impl DirName {
     }
 }
 
-impl From<&JiraKey> for SpaceName {
-    fn from(key: &JiraKey) -> Self {
-        // A Jira key is a valid segment by construction.
+impl From<&TicketKey> for SpaceName {
+    fn from(key: &TicketKey) -> Self {
+        // A ticket key is a valid segment by construction.
         Self(key.0.clone())
     }
 }

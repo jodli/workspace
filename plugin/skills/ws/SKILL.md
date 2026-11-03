@@ -1,6 +1,6 @@
 ---
 name: ws
-description: Multi-repo worktree workspace. Use for any work inside a ws workspace (a directory with ws.toml): starting work on a Jira ticket or a spike, finding where work lives, reviewing an existing branch, cleaning up finished work. repos/ is read-only; all work happens in spaces/.
+description: Multi-repo worktree workspace. Use for any work inside a ws workspace (a directory with ws.toml): starting work on a ticket or a spike, finding where work lives, reviewing an existing branch, cleaning up finished work. repos/ is read-only; all work happens in spaces/.
 ---
 
 # ws
@@ -17,9 +17,9 @@ the hint names the fix.
 
 ## Start work
 
-1. Read the issue type in Jira and map it:
+1. Read the ticket type in the ticket system and map it:
    - Bug: `--issue bug`
-   - Story: `--issue story`
+   - Story or feature: `--issue story`
    - Task: `--issue task --change <c>`. Judge `<c>` from the ticket: `feat`, `fix`, `chore`, `refactor`, `docs`, `test`, `ci`, `perf` or `build`.
    - Sub-task: the parent ticket's type with the rule above, plus `--parent <PARENT-KEY>`.
    - Epic: not worked on directly. Start one of its child tickets.

@@ -9,7 +9,7 @@ use super::{Failure, Report};
 use crate::branch::{ChangeType, IssueType, Work, resolve};
 use crate::error::{Error, Exit, InputError, WorkspaceError};
 use crate::git::Rev;
-use crate::names::{BranchName, JiraKey, RepoName, SpaceName};
+use crate::names::{BranchName, RepoName, SpaceName, TicketKey};
 use crate::space::{self, Meta, Purpose};
 use crate::warm::{self, WarmReport, Warmth};
 use crate::workspace::{Lock, Repo, Slot, Workspace, par_map};
@@ -104,10 +104,10 @@ pub fn spike(
 
 pub fn start(
     ws: &Workspace,
-    key: JiraKey,
+    key: TicketKey,
     issue: IssueType,
     change: Option<ChangeType>,
-    parent: Option<JiraKey>,
+    parent: Option<TicketKey>,
     repos: &[RepoName],
     warmth: Warmth,
 ) -> Result<CreateReport, Error> {
