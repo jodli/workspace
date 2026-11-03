@@ -76,7 +76,7 @@ impl Changes {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Upstream {
     None,
-    /// Configured, but the remote branch was deleted (usually: MR merged).
+    /// Configured, but the remote branch was deleted (usually: PR/MR merged).
     Gone {
         name: String,
     },

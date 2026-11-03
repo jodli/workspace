@@ -1,5 +1,5 @@
 //! `ws adopt <space> <repo> <branch>`: put an existing branch into a space,
-//! e.g. to review an MR or to rescue work from `repos/`.
+//! e.g. to review a PR/MR or to rescue work from `repos/`.
 
 use serde::Serialize;
 

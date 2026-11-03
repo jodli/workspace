@@ -87,9 +87,9 @@ name_type!(
 );
 
 name_type!(
-    /// Project path on the GitLab host, e.g. `group/sub/project`.
-    GitlabPath,
-    "gitlab path",
+    /// Repository path on the forge: `group/sub/project` or `owner/repo`.
+    RemotePath,
+    "remote path",
     |s| s.split('/').all(is_segment),
     "segments of letters, digits, '.', '_', '-' separated by '/'"
 );
@@ -106,7 +106,7 @@ name_type!(
 );
 
 name_type!(
-    /// A full commit id. Abbreviated ids are refused on purpose: the merged-MR
+    /// A full commit id. Abbreviated ids are refused on purpose: the merged-request
     /// check compares against HEAD and must not match by prefix.
     CommitSha,
     "commit sha",
@@ -143,7 +143,7 @@ name_type!(
 );
 
 name_type!(
-    /// A host name, e.g. `gitlab.example.com`.
+    /// A host name, e.g. `git.example.com`.
     Host,
     "host",
     |s| !s.is_empty()

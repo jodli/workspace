@@ -6,7 +6,7 @@ canonical clones stay untouched on their default branch.
 
 ```text
 <root>/ws.toml                config, marks the root (see ws.example.toml)
-<root>/repos.tsv              roster: <name><TAB><gitlab path>[<TAB>gitflow]
+<root>/repos.tsv              roster: <name><TAB><remote path>[<TAB>gitflow]
 <root>/repos/<repo>           canonical clone, default branch, read only
 <root>/spaces/<space>/<repo>  worktrees; SPACE.md holds the notes
 ```

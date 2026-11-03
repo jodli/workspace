@@ -69,7 +69,7 @@ impl Fixture {
         std::fs::create_dir_all(root.join("repos"))?;
         std::fs::write(
             root.join("ws.toml"),
-            "[gitlab]\nhost = \"gitlab.example.com\"\n",
+            "[forge]\nkind = \"gitlab\"\nhost = \"git.example.com\"\n",
         )?;
         std::fs::write(root.join("repos.tsv"), format!("{REPO}\tgroup/{REPO}\n"))?;
         git(

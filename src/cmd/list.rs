@@ -9,7 +9,7 @@ use super::Report;
 use crate::branch::PrefixStyle;
 use crate::error::Error;
 use crate::git::Git;
-use crate::names::{BranchName, GitlabPath, RepoName, SpaceName};
+use crate::names::{BranchName, RemotePath, RepoName, SpaceName};
 use crate::removal::MissingView;
 use crate::space::{self, Found, Meta, SpaceScan};
 use crate::workspace::{RepoFacts, Workspace, par_map};
@@ -27,7 +27,7 @@ impl Report for ListReport {}
 #[derive(Debug, Serialize)]
 pub struct RepoView {
     pub name: RepoName,
-    pub gitlab: GitlabPath,
+    pub remote: RemotePath,
     pub style: PrefixStyle,
     pub path: PathBuf,
     /// `null` when the repo is in the roster but not cloned.
@@ -64,7 +64,7 @@ pub fn list(ws: &Workspace) -> Result<ListReport, Error> {
     let repos = par_map(&entries, |entry| {
         Ok::<_, Error>(RepoView {
             name: entry.name.clone(),
-            gitlab: entry.gitlab.clone(),
+            remote: entry.remote.clone(),
             style: entry.style,
             path: ws.repo_dir(&entry.name),
             state: ws.repo(entry).map(|r| r.facts()).transpose()?,

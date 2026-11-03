@@ -107,13 +107,14 @@ impl InputError {
             Self::SubTask => "pass --issue with the type of the parent ticket".into(),
             Self::Epic => "start one of the epic's child tickets instead".into(),
             Self::MergedProof(_) => {
-                "use --merged <repo>=<sha>, where sha is the full head sha of the merged MR".into()
+                "use --merged <repo>=<sha>, where sha is the full head sha of the merged PR/MR"
+                    .into()
             }
             Self::MergedUnused(_) => {
                 "drop that --merged; `ws status <space>` lists the worktrees".into()
             }
             Self::UnknownRepo(_) => {
-                "`ws list` shows the roster; add a repo with `ws add <gitlab path>`".into()
+                "`ws list` shows the roster; add a repo with `ws add <remote path>`".into()
             }
             Self::SpaceConflict { .. } => {
                 "`ws status <space>` shows what the space is; pick another name".into()

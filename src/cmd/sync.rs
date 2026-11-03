@@ -66,7 +66,7 @@ fn sync_one(ws: &Workspace, lock: &Lock, entry: &RepoEntry) -> Result<SyncOutcom
     let Some(repo) = ws.repo(entry) else {
         Git::clone_into(
             lock,
-            &ws.config.gitlab.ssh_url(&entry.gitlab),
+            &ws.config.forge.ssh_url(&entry.remote),
             &ws.repo_dir(&entry.name),
         )?;
         return Ok(SyncOutcome::Cloned);

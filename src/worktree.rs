@@ -82,10 +82,10 @@ pub enum Basis {
     /// Clean, and every commit is on a remote branch (the upstream, or the
     /// default branch when there is no live upstream).
     NothingUnpushed,
-    /// Clean and HEAD is exactly the head of a merged MR, as the agent
-    /// reported from GitLab. Covers squash merges, where the commits never
+    /// Clean and HEAD is exactly the head of a merged PR/MR, as the agent
+    /// reported from the forge. Covers squash merges, where the commits never
     /// reach the default branch.
-    MrMerged {
+    Merged {
         sha: CommitSha,
     },
     Forced,
@@ -103,7 +103,7 @@ pub enum Keep {
         commits: usize,
     },
     /// The remote branch was deleted and its commits are not on the default
-    /// branch: usually a squash merge. `mr_check` says how to confirm.
+    /// branch: usually a squash merge. `merge_check` says how to confirm.
     UpstreamGone {
         commits: usize,
     },
@@ -147,7 +147,7 @@ impl Worktree<Unchecked> {
         Git::at(&self.subject.path)
     }
 
-    /// `merged` are the shas the agent reported as merged MR heads for this
+    /// `merged` are the shas the agent reported as merged PR/MR heads for this
     /// repo. One that equals HEAD proves the work landed; one that does not
     /// is reported back, since the agent's information is stale.
     pub fn check(self, facts: &Facts, merged: &[&CommitSha]) -> Checked {
@@ -158,7 +158,7 @@ impl Worktree<Unchecked> {
                 changes: facts.changes.clone(),
             }
         } else if let Some(sha) = merged.iter().find(|s| facts.head.as_ref() == Some(**s)) {
-            let basis = Basis::MrMerged {
+            let basis = Basis::Merged {
                 sha: (*sha).clone(),
             };
             return Checked::Removable(self.into_removable(basis, true));

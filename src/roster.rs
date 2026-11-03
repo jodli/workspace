@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! # comment
-//! <name><TAB><gitlab path>[<TAB>gitflow]
+//! <name><TAB><remote path>[<TAB>gitflow]
 //! ```
 //! Runs of tabs count as one separator, so columns can be aligned.
 
@@ -12,15 +12,15 @@ use serde::Serialize;
 
 use crate::branch::PrefixStyle;
 use crate::error::{Error, InputError, WorkspaceError};
-use crate::names::{GitlabPath, RepoName};
+use crate::names::{RemotePath, RepoName};
 
 /// The line format, also used as the hint for roster errors.
-pub const FORMAT: &str = "roster lines are <name><TAB><gitlab path>[<TAB>gitflow]";
+pub const FORMAT: &str = "roster lines are <name><TAB><remote path>[<TAB>gitflow]";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RepoEntry {
     pub name: RepoName,
-    pub gitlab: GitlabPath,
+    pub remote: RemotePath,
     pub style: PrefixStyle,
 }
 
@@ -55,7 +55,7 @@ impl Roster {
                 .map(str::trim)
                 .filter(|c| !c.is_empty())
                 .collect();
-            let (name, gitlab, style) = match cols.as_slice() {
+            let (name, remote, style) = match cols.as_slice() {
                 [n, p] => (*n, *p, PrefixStyle::Conventional),
                 [n, p, s] => (*n, *p, s.parse().map_err(|m| err(line_no, m))?),
                 _ => {
@@ -68,14 +68,14 @@ impl Roster {
             let field = |e: InputError| err(line_no, e.to_string());
             let entry = RepoEntry {
                 name: name.parse().map_err(field)?,
-                gitlab: gitlab.parse().map_err(field)?,
+                remote: remote.parse().map_err(field)?,
                 style,
             };
             if entries.iter().any(|e| e.name == entry.name) {
                 return Err(err(line_no, format!("duplicate name '{}'", entry.name)));
             }
-            if entries.iter().any(|e| e.gitlab == entry.gitlab) {
-                return Err(err(line_no, format!("duplicate path '{}'", entry.gitlab)));
+            if entries.iter().any(|e| e.remote == entry.remote) {
+                return Err(err(line_no, format!("duplicate path '{}'", entry.remote)));
             }
             entries.push(entry);
         }
@@ -98,14 +98,14 @@ impl Roster {
             .ok_or_else(|| InputError::UnknownRepo(name.clone()))
     }
 
-    pub fn by_path(&self, gitlab: &GitlabPath) -> Option<&RepoEntry> {
-        self.entries.iter().find(|e| &e.gitlab == gitlab)
+    pub fn by_path(&self, remote: &RemotePath) -> Option<&RepoEntry> {
+        self.entries.iter().find(|e| &e.remote == remote)
     }
 
     /// Picks a free local name for a new path: the last segment, or
     /// `<parent>-<last>` when that is taken. Mirrors how people name clones.
-    pub fn free_name(&self, gitlab: &GitlabPath) -> Option<RepoName> {
-        let mut segs = gitlab.as_str().rsplit('/');
+    pub fn free_name(&self, remote: &RemotePath) -> Option<RepoName> {
+        let mut segs = remote.as_str().rsplit('/');
         let last = segs.next()?;
         let candidates = [
             Some(last.to_owned()),
@@ -135,7 +135,7 @@ impl Roster {
             .append(true)
             .open(&self.path)
             .map_err(Error::io(&self.path))?;
-        writeln!(f, "{sep}{}\t{}{style}", entry.name, entry.gitlab)
+        writeln!(f, "{sep}{}\t{}{style}", entry.name, entry.remote)
             .map_err(Error::io(&self.path))?;
         self.entries.push(entry);
         Ok(())
@@ -149,11 +149,11 @@ mod tests {
     // The format of the roster that already exists, aligned with tab runs.
     #[test]
     fn parses_existing_format() -> Result<(), WorkspaceError> {
-        let text = "# Roster\n#\n# local-name\t\tgitlab path\ndocs\tteam/docs\nCore\t\tteam/Core\tgitflow\n\n";
+        let text = "# Roster\n#\n# local-name\t\tremote path\ndocs\tteam/docs\nCore\t\tteam/Core\tgitflow\n\n";
         let r = Roster::parse(Path::new("repos.tsv"), text)?;
         let names: Vec<_> = r
             .iter()
-            .map(|e| (e.name.as_str(), e.gitlab.as_str(), e.style))
+            .map(|e| (e.name.as_str(), e.remote.as_str(), e.style))
             .collect();
         assert_eq!(
             names,

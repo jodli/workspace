@@ -27,7 +27,7 @@ the hint names the fix.
    `path` of each worktree in the result. The branch prefix follows each
    repo's convention.
 3. Exploration without a ticket: `ws spike <name> <repo>...`.
-4. An existing branch, e.g. to review an MR: `ws adopt <space> <repo> <branch>`.
+4. An existing branch, e.g. to review a PR/MR: `ws adopt <space> <repo> <branch>`.
 
 Re-running any of these is safe; existing worktrees are reported and left
 alone. New worktrees get `target/` and `node_modules/` copied from another
@@ -48,22 +48,22 @@ local refs only: remote state (`behind`, `upstream`) is as of each repo's
    - `finished`: the work landed. Removed by `--yes`.
    - `active`: safe, but not landed (`progress`: `no_commits` or `unmerged`). Left alone.
    - `kept`: removing it would lose work (`reason`). Leave it to whoever owns it.
-2. Where an entry has `mr_check`, run `glab api "<mr_check.api_path>"`. If a
-   merged MR's `sha` equals the worktree's `head`, the work landed: pass
-   `mr_check.if_merged` in step 3.
+2. Where an entry has `merge_check`, run its `command` (the forge CLI, `gh` or
+   `glab`). If an entry's `head_sha_field` equals the worktree's `head`, the
+   work landed: pass `merge_check.if_merged` in step 3.
 3. `ws prune --yes [--merged <repo>=<sha>...]` removes spaces whose worktrees
    are all finished.
 4. `ws drop <space> [--merged ...]` removes one space now, as far as nothing
-   would be lost (open MRs included). Never pass `--force` unless the user
+   would be lost (open PRs/MRs included). Never pass `--force` unless the user
    asks for it: it discards work.
 
 ## Repos
 
 - `ws sync`: fetch and fast-forward every default branch.
-- `ws add <gitlab path> [--gitflow]`: add a repo. Find paths with
-  `glab api "projects?search=<term>&membership=true"`. `--gitflow` for repos
+- `ws add <remote path> [--gitflow]`: add a repo (`group/project` or
+  `owner/repo`, as the forge CLI shows it). `--gitflow` for repos
   that name branches `feature/` and `bugfix/`.
-- `ws doctor`: git, GitLab reachability, workspace invariants.
+- `ws doctor`: git, forge reachability, workspace invariants.
 
 The plugin's hook denies writes into `repos/` and raw `git worktree`
 commands; the denial names the `ws` command to use.

@@ -124,28 +124,28 @@ fn local(ws: &Workspace) -> Result<Vec<Check>, Error> {
 
 /// Reachability first: without it the ssh check would only time out.
 fn network(ws: &Workspace) -> Vec<Check> {
-    let host = ws.config.gitlab.host.as_str();
+    let host = ws.config.forge.host.as_str();
     let reachable = (host, 22)
         .to_socket_addrs()
         .ok()
         .and_then(|mut addrs| addrs.next())
         .is_some_and(|addr| TcpStream::connect_timeout(&addr, Duration::from_secs(5)).is_ok());
     let mut checks = vec![check(
-        "gitlab_reachable",
+        "forge_reachable",
         reachable,
         format!("{host}:22"),
-        "check network access to gitlab.host in ws.toml",
+        "check network access to forge.host in ws.toml",
     )];
     // Through git, so it tests the ssh setup git actually uses.
     if reachable && let Some(entry) = ws.roster.iter().next() {
-        let url = ws.config.gitlab.ssh_url(&entry.gitlab);
+        let url = ws.config.forge.ssh_url(&entry.remote);
         checks.push(match Git::ls_remote(&url) {
-            Ok(()) => check("gitlab_ssh", true, url, ""),
+            Ok(()) => check("forge_ssh", true, url, ""),
             Err(e) => check(
-                "gitlab_ssh",
+                "forge_ssh",
                 false,
                 e.to_string(),
-                "load an ssh key that GitLab accepts into the agent",
+                "load an ssh key that the forge accepts into the agent",
             ),
         });
     }

@@ -76,7 +76,7 @@ fn pushed_but_unmerged_branch_survives_its_worktree() -> TestResult {
 }
 
 // The squash case: commits never reach main, the remote branch is deleted.
-// Only the agent's proof from GitLab lets the worktree go, and only for the
+// Only the agent's proof from the forge lets the worktree go, and only for the
 // exact head it names.
 #[test]
 fn squash_merge_needs_proof_of_the_exact_head() -> TestResult {
@@ -91,7 +91,7 @@ fn squash_merge_needs_proof_of_the_exact_head() -> TestResult {
     assert!(matches!(r.removal.kept[0].keep, Keep::UpstreamGone { .. }));
     assert!(
         r.removal.kept[0]
-            .mr_check
+            .merge_check
             .as_ref()
             .is_some_and(|c| c.if_merged == format!("--merged {REPO}={head}"))
     );
@@ -102,7 +102,7 @@ fn squash_merge_needs_proof_of_the_exact_head() -> TestResult {
 
     let r = drop_with(&f, "s", &[format!("{REPO}={head}")])?;
     assert!(r.removal.space_removed);
-    assert!(matches!(r.removal.removed[0].basis, Basis::MrMerged { .. }));
+    assert!(matches!(r.removal.removed[0].basis, Basis::Merged { .. }));
     Ok(())
 }
 

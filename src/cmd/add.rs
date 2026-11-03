@@ -1,4 +1,4 @@
-//! `ws add <gitlab path>...`: put repos in the roster and clone them.
+//! `ws add <remote path>...`: put repos in the roster and clone them.
 
 use serde::Serialize;
 
@@ -6,7 +6,7 @@ use super::Report;
 use super::sync::{SyncReport, sync_entries};
 use crate::branch::PrefixStyle;
 use crate::error::{Error, Exit, InputError};
-use crate::names::{GitlabPath, RepoName};
+use crate::names::{RemotePath, RepoName};
 use crate::roster::RepoEntry;
 use crate::workspace::Workspace;
 
@@ -25,7 +25,7 @@ impl Report for AddReport {
 
 pub fn add(
     ws: &mut Workspace,
-    paths: &[GitlabPath],
+    paths: &[RemotePath],
     style: PrefixStyle,
 ) -> Result<AddReport, Error> {
     let lock = ws.lock()?;
@@ -42,7 +42,7 @@ pub fn add(
             .ok_or_else(|| InputError::Usage(format!("no free local name for '{path}'")))?;
         let entry = RepoEntry {
             name,
-            gitlab: path.clone(),
+            remote: path.clone(),
             style,
         };
         ws.roster.append(entry.clone())?;

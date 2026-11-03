@@ -8,7 +8,7 @@ use ws::cmd::prune::Apply;
 use ws::cmd::{self, Failure, Report};
 use ws::error::{Error, Exit, InputError};
 use ws::guard;
-use ws::names::{BranchName, GitlabPath, RepoName, SpaceName, TicketKey};
+use ws::names::{BranchName, RemotePath, RepoName, SpaceName, TicketKey};
 use ws::removal::{MergedProof, Safety};
 use ws::warm::Warmth;
 use ws::workspace::Workspace;
@@ -82,10 +82,10 @@ enum Cmd {
         #[command(flatten)]
         warm: WarmArgs,
     },
-    /// Add GitLab projects to the roster and clone them.
+    /// Add forge repositories to the roster and clone them.
     Add {
         #[arg(required = true)]
-        paths: Vec<GitlabPath>,
+        paths: Vec<RemotePath>,
         /// The repos use feature/ and bugfix/ instead of feat/ and fix/.
         #[arg(long)]
         gitflow: bool,
@@ -95,8 +95,8 @@ enum Cmd {
     #[command(alias = "rm")]
     Drop {
         space: SpaceName,
-        /// `<repo>=<sha>`: the MR of this repo's branch is merged at this head
-        /// sha (from GitLab). Lets squash-merged branches go.
+        /// `<repo>=<sha>`: the PR/MR of this repo's branch is merged at this
+        /// head sha (see `merge_check`). Lets squash-merged branches go.
         #[arg(long = "merged", value_name = "REPO=SHA")]
         merged: Vec<MergedProof>,
         /// Remove even with uncommitted or unpushed work. Loses it.
@@ -105,7 +105,7 @@ enum Cmd {
     },
     /// Report which spaces are finished; with --yes, remove them.
     Prune {
-        /// `<repo>=<sha>` from a merged MR (see `mr_check` in the report).
+        /// `<repo>=<sha>` from a merged PR/MR (see `merge_check` in the report).
         /// Matched by sha, so one flag covers every space with that head.
         #[arg(long = "merged", value_name = "REPO=SHA")]
         merged: Vec<MergedProof>,
@@ -113,7 +113,7 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
-    /// Check git, GitLab reachability and the workspace invariants.
+    /// Check git, forge reachability and the workspace invariants.
     Doctor,
     /// Claude Code `PreToolUse` hook: reads the hook JSON on stdin, denies
     /// writes into repos/ and raw worktree management. Allows on any doubt.

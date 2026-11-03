@@ -2,7 +2,7 @@
 //! spaces where every worktree is finished.
 //!
 //! Finished is stricter than what `ws drop` accepts. A pushed branch with an
-//! open MR loses nothing when its worktree goes, but it is work in progress;
+//! open PR/MR loses nothing when its worktree goes, but it is work in progress;
 //! prune only clears work that landed.
 
 use std::path::PathBuf;
@@ -13,8 +13,8 @@ use super::Report;
 use crate::error::{Error, Exit};
 use crate::names::SpaceName;
 use crate::removal::{
-    Evaluated, FetchError, Kept, MergedProof, MrCheck, Safety, SpaceRemoval, evaluate_all, refresh,
-    remove_space,
+    Evaluated, FetchError, Kept, MergeCheck, MergedProof, Safety, SpaceRemoval, evaluate_all,
+    refresh, remove_space,
 };
 use crate::space;
 use crate::workspace::Workspace;
@@ -55,7 +55,7 @@ pub enum WorktreeVerdict {
         #[serde(flatten)]
         progress: Progress,
         #[serde(skip_serializing_if = "Option::is_none")]
-        mr_check: Option<MrCheck>,
+        merge_check: Option<MergeCheck>,
     },
     Kept(Kept),
 }
@@ -65,8 +65,8 @@ pub enum WorktreeVerdict {
 pub enum Progress {
     /// Nothing committed beyond the default branch yet; just started.
     NoCommits,
-    /// Pushed, with commits not on the default branch: an open MR, or a
-    /// squash merge that `mr_check` can confirm.
+    /// Pushed, with commits not on the default branch: an open PR/MR, or a
+    /// squash merge that `merge_check` can confirm.
     Unmerged { ahead_of_default: usize },
 }
 
@@ -74,7 +74,7 @@ impl WorktreeVerdict {
     fn of(e: &Evaluated) -> Self {
         match &e.checked {
             Checked::Removable(wt) => {
-                let landed = matches!(wt.basis(), Basis::MrMerged { .. }) || e.facts.landed();
+                let landed = matches!(wt.basis(), Basis::Merged { .. }) || e.facts.landed();
                 if landed {
                     Self::Finished {
                         subject: wt.subject.clone(),
@@ -91,14 +91,14 @@ impl WorktreeVerdict {
                     Self::Active {
                         subject: wt.subject.clone(),
                         progress,
-                        mr_check: e.mr_check(&wt.subject),
+                        merge_check: e.merge_check.clone(),
                     }
                 }
             }
             Checked::Keep(wt, keep) => Self::Kept(Kept {
                 subject: wt.subject.clone(),
                 keep: keep.clone(),
-                mr_check: e.mr_check(&wt.subject),
+                merge_check: e.merge_check.clone(),
             }),
         }
     }

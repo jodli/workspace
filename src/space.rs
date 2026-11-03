@@ -39,7 +39,7 @@ pub enum Purpose {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent: Option<TicketKey>,
     },
-    /// An existing branch pulled into a space, e.g. to review an MR.
+    /// An existing branch pulled into a space, e.g. to review a PR/MR.
     Adopted {
         branch: BranchName,
     },
