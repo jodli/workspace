@@ -318,12 +318,6 @@ impl Git {
             .is_some())
     }
 
-    pub fn is_ancestor(&self, commit: Rev<'_>, of: Rev<'_>) -> Result<bool> {
-        Ok(self
-            .query(["merge-base", "--is-ancestor", &commit.spec(), &of.spec()])?
-            .is_some())
-    }
-
     /// Adds a worktree. With `new_from`, creates the branch there without an
     /// upstream: otherwise git makes the base the upstream and `git pull` in
     /// the worktree pulls the default branch.

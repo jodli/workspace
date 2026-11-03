@@ -43,13 +43,37 @@ impl Facts {
             ahead_of_default,
         })
     }
+
+    /// Every commit is on the default branch, so the local branch holds
+    /// nothing of its own.
+    pub fn on_default(&self) -> bool {
+        self.ahead_of_default == 0
+    }
+
+    /// The work was pushed once and is now on the default branch: it landed.
+    /// A branch that was never pushed and is on default was never started.
+    pub fn landed(&self) -> bool {
+        self.on_default() && !matches!(self.upstream, Upstream::None)
+    }
+}
+
+/// The identifying fields every per-worktree report entry carries.
+#[derive(Debug, Clone, Serialize)]
+pub struct Subject {
+    pub repo: RepoName,
+    pub path: PathBuf,
+    pub branch: Option<BranchName>,
+    pub head: Option<CommitSha>,
 }
 
 #[derive(Debug)]
 pub struct Unchecked;
 
 #[derive(Debug)]
-pub struct Removable(Basis);
+pub struct Removable {
+    basis: Basis,
+    delete_branch: bool,
+}
 
 /// Why removal is allowed.
 #[derive(Debug, Clone, Serialize)]
@@ -79,23 +103,19 @@ pub enum Keep {
     /// A merged sha was given, but the worktree is somewhere else.
     HeadMoved {
         merged: CommitSha,
-        head: Option<CommitSha>,
     },
     Locked,
 }
 
 #[derive(Debug)]
 pub struct Worktree<S> {
-    pub repo: RepoName,
-    pub path: PathBuf,
-    pub branch: Option<BranchName>,
+    pub subject: Subject,
     /// The canonical repo the worktree belongs to.
     owner: Git,
     locked: bool,
     state: S,
 }
 
-#[derive(Debug)]
 pub enum Checked {
     Removable(Worktree<Removable>),
     Keep(Worktree<Unchecked>, Keep),
@@ -104,9 +124,12 @@ pub enum Checked {
 impl Worktree<Unchecked> {
     pub fn new(found: &Found, owner: Git) -> Self {
         Self {
-            repo: found.repo.clone(),
-            path: found.entry.path.clone(),
-            branch: found.entry.branch.clone(),
+            subject: Subject {
+                repo: found.repo.clone(),
+                path: found.entry.path.clone(),
+                branch: found.entry.branch.clone(),
+                head: found.entry.head.clone(),
+            },
             owner,
             locked: found.entry.locked,
             state: Unchecked,
@@ -114,24 +137,30 @@ impl Worktree<Unchecked> {
     }
 
     pub fn git(&self) -> Git {
-        Git::at(&self.path)
+        Git::at(&self.subject.path)
     }
 
-    pub fn check(self, facts: &Facts, merged: Option<&CommitSha>) -> Checked {
+    /// `merged` are the shas the agent reported as merged MR heads for this
+    /// repo. One that equals HEAD proves the work landed; one that does not
+    /// is reported back, since the agent's information is stale.
+    pub fn check(self, facts: &Facts, merged: &[&CommitSha]) -> Checked {
         let keep = if self.locked {
             Keep::Locked
         } else if !facts.changes.is_clean() {
             Keep::Uncommitted {
                 changes: facts.changes,
             }
-        } else if let Some(sha) = merged.filter(|s| facts.head.as_ref() == Some(*s)) {
-            return Checked::Removable(self.into_removable(Basis::Merged { sha: sha.clone() }));
+        } else if let Some(sha) = merged.iter().find(|s| facts.head.as_ref() == Some(**s)) {
+            let basis = Basis::Merged {
+                sha: (*sha).clone(),
+            };
+            return Checked::Removable(self.into_removable(basis, true));
         } else if facts.unpushed == 0 {
-            return Checked::Removable(self.into_removable(Basis::Local));
-        } else if let Some(sha) = merged {
+            let delete_branch = facts.on_default();
+            return Checked::Removable(self.into_removable(Basis::Local, delete_branch));
+        } else if let Some(sha) = merged.first() {
             Keep::HeadMoved {
-                merged: sha.clone(),
-                head: facts.head.clone(),
+                merged: (*sha).clone(),
             }
         } else {
             Keep::Unpushed {
@@ -143,26 +172,26 @@ impl Worktree<Unchecked> {
 
     /// Skips every check. Uncommitted changes and unpushed commits are lost.
     pub fn force(self) -> Worktree<Removable> {
-        self.into_removable(Basis::Forced)
+        self.into_removable(Basis::Forced, true)
     }
 
-    fn into_removable(self, basis: Basis) -> Worktree<Removable> {
+    fn into_removable(self, basis: Basis, delete_branch: bool) -> Worktree<Removable> {
         Worktree {
-            repo: self.repo,
-            path: self.path,
-            branch: self.branch,
+            subject: self.subject,
             owner: self.owner,
             locked: self.locked,
-            state: Removable(basis),
+            state: Removable {
+                basis,
+                delete_branch,
+            },
         }
     }
 }
 
 #[derive(Debug, Serialize)]
 pub struct Removed {
-    pub repo: RepoName,
-    pub path: PathBuf,
-    pub branch: Option<BranchName>,
+    #[serde(flatten)]
+    pub subject: Subject,
     #[serde(flatten)]
     pub basis: Basis,
     /// The local branch was deleted too. It stays when it has commits that
@@ -172,33 +201,25 @@ pub struct Removed {
 
 impl Worktree<Removable> {
     pub fn basis(&self) -> &Basis {
-        &self.state.0
+        &self.state.basis
     }
 
-    pub fn remove(self, lock: &Lock, default: &BranchName) -> Result<Removed, Error> {
-        let basis = self.state.0;
+    pub fn remove(self, lock: &Lock) -> Result<Removed, Error> {
+        let Removable {
+            basis,
+            delete_branch,
+        } = self.state;
         self.owner
-            .worktree_remove(lock, &self.path, matches!(basis, Basis::Forced))?;
-        self.owner.worktree_prune(lock)?;
-        let branch_deleted = match &self.branch {
-            None => false,
-            Some(b) => {
-                let delete = match &basis {
-                    Basis::Merged { .. } | Basis::Forced => true,
-                    Basis::Local => self
-                        .owner
-                        .is_ancestor(Rev::Local(b), Rev::Origin(default))?,
-                };
-                if delete {
-                    self.owner.branch_delete(lock, b)?;
-                }
-                delete
+            .worktree_remove(lock, &self.subject.path, matches!(basis, Basis::Forced))?;
+        let branch_deleted = match (&self.subject.branch, delete_branch) {
+            (Some(b), true) => {
+                self.owner.branch_delete(lock, b)?;
+                true
             }
+            _ => false,
         };
         Ok(Removed {
-            repo: self.repo,
-            path: self.path,
-            branch: self.branch,
+            subject: self.subject,
             basis,
             branch_deleted,
         })

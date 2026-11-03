@@ -3,7 +3,8 @@ mod common;
 use common::{Fixture, REPO, TestResult, commit, git};
 use ws::branch::{ChangeType, IssueType};
 use ws::cmd::create::{CreateOutcome, spike, start};
-use ws::cmd::drop::{DropReport, MergedProof, Safety, drop};
+use ws::cmd::drop::{DropReport, drop};
+use ws::removal::{MergedProof, Safety};
 use ws::worktree::{Basis, Keep};
 
 fn repos() -> TestResult<Vec<ws::names::RepoName>> {
@@ -26,13 +27,16 @@ fn keeps_uncommitted_and_unpushed_work() -> TestResult {
 
     std::fs::write(wt.join("scratch.txt"), "wip")?;
     let r = drop_with(&f, "s", &[])?;
-    assert!(matches!(r.kept[0].keep, Keep::Uncommitted { .. }));
-    assert!(!r.space_removed && wt.exists());
+    assert!(matches!(r.removal.kept[0].keep, Keep::Uncommitted { .. }));
+    assert!(!r.removal.space_removed && wt.exists());
     std::fs::remove_file(wt.join("scratch.txt"))?;
 
     commit(&wt, "work.txt", "local only")?;
     let r = drop_with(&f, "s", &[])?;
-    assert!(matches!(r.kept[0].keep, Keep::Unpushed { commits: 1 }));
+    assert!(matches!(
+        r.removal.kept[0].keep,
+        Keep::Unpushed { commits: 1 }
+    ));
     assert!(wt.exists());
     Ok(())
 }
@@ -42,9 +46,9 @@ fn clean_fresh_space_goes_with_branch_and_notes_archived() -> TestResult {
     let f = Fixture::new()?;
     spike(&f.ws()?, "s".parse()?, &repos()?)?;
     let r = drop_with(&f, "s", &[])?;
-    assert!(r.space_removed);
-    assert!(matches!(r.removed[0].basis, Basis::Local));
-    assert!(r.removed[0].branch_deleted);
+    assert!(r.removal.space_removed);
+    assert!(matches!(r.removal.removed[0].basis, Basis::Local));
+    assert!(r.removal.removed[0].branch_deleted);
     assert!(f.root.join("spaces/.archive/s.md").is_file());
     assert_eq!(
         git(
@@ -65,8 +69,8 @@ fn pushed_but_unmerged_branch_survives_its_worktree() -> TestResult {
     git(&wt, &["push", "--quiet", "-u", "origin", "spike/s"])?;
 
     let r = drop_with(&f, "s", &[])?;
-    assert!(matches!(r.removed[0].basis, Basis::Local));
-    assert!(!r.removed[0].branch_deleted);
+    assert!(matches!(r.removal.removed[0].basis, Basis::Local));
+    assert!(!r.removal.removed[0].branch_deleted);
     Ok(())
 }
 
@@ -83,21 +87,21 @@ fn squash_merge_needs_proof_of_the_exact_head() -> TestResult {
     git(&f.origin, &["branch", "-D", "spike/s"])?;
 
     let r = drop_with(&f, "s", &[])?;
-    assert!(matches!(r.kept[0].keep, Keep::Unpushed { .. }));
+    assert!(matches!(r.removal.kept[0].keep, Keep::Unpushed { .. }));
     assert!(
-        r.kept[0]
-            .hint
-            .as_deref()
-            .is_some_and(|h| h.contains("--merged"))
+        r.removal.kept[0]
+            .mr_check
+            .as_ref()
+            .is_some_and(|c| c.if_merged == format!("--merged {REPO}={head}"))
     );
 
     let stale = format!("{REPO}={}", "0".repeat(40));
     let r = drop_with(&f, "s", &[stale])?;
-    assert!(matches!(r.kept[0].keep, Keep::HeadMoved { .. }));
+    assert!(matches!(r.removal.kept[0].keep, Keep::HeadMoved { .. }));
 
     let r = drop_with(&f, "s", &[format!("{REPO}={head}")])?;
-    assert!(r.space_removed);
-    assert!(matches!(r.removed[0].basis, Basis::Merged { .. }));
+    assert!(r.removal.space_removed);
+    assert!(matches!(r.removal.removed[0].basis, Basis::Merged { .. }));
     Ok(())
 }
 

@@ -4,11 +4,11 @@ use clap::{ColorChoice, Parser, Subcommand};
 use serde::Serialize;
 
 use ws::branch::{ChangeType, IssueType, PrefixStyle};
-use ws::cmd::drop::{MergedProof, Safety};
 use ws::cmd::prune::Apply;
 use ws::cmd::{self, Failure, Report};
 use ws::error::{Error, Exit, InputError};
 use ws::names::{BranchName, GitlabPath, JiraKey, RepoName, SpaceName};
+use ws::removal::{MergedProof, Safety};
 use ws::workspace::Workspace;
 
 /// Multi-repo worktree workspace for coding agents.

@@ -5,18 +5,20 @@
 //! open MR loses nothing when its worktree goes, but it is work in progress;
 //! prune only clears work that landed.
 
+use std::path::PathBuf;
+
 use serde::Serialize;
 
 use super::Report;
-use super::drop::{
-    DropReport, FetchError, Kept, MergedProof, Safety, evaluate, kept, refresh, remove_space,
-};
 use crate::error::{Error, Exit};
-use crate::git::Upstream;
-use crate::names::{BranchName, CommitSha, RepoName, SpaceName};
+use crate::names::SpaceName;
+use crate::removal::{
+    Evaluated, FetchError, Kept, MergedProof, MrCheck, Safety, SpaceRemoval, evaluate_all, refresh,
+    remove_space,
+};
 use crate::space;
 use crate::workspace::Workspace;
-use crate::worktree::{Basis, Checked, Facts};
+use crate::worktree::{Basis, Checked, Subject};
 
 #[derive(Debug, Serialize)]
 pub struct PruneReport {
@@ -32,53 +34,56 @@ pub struct SpaceVerdict {
     /// Every worktree is finished and there are no strays.
     pub finished: bool,
     pub worktrees: Vec<WorktreeVerdict>,
-    pub strays: usize,
+    pub strays: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dropped: Option<DropReport>,
+    pub removal: Option<SpaceRemoval>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "verdict", rename_all = "snake_case")]
 pub enum WorktreeVerdict {
     Finished {
-        repo: RepoName,
+        #[serde(flatten)]
+        subject: Subject,
         #[serde(flatten)]
         basis: Basis,
     },
     /// Safe to drop, but not landed.
     Active {
-        repo: RepoName,
-        branch: Option<BranchName>,
-        head: Option<CommitSha>,
         #[serde(flatten)]
-        state: Active,
+        subject: Subject,
+        idle: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
-        hint: Option<String>,
+        mr_check: Option<MrCheck>,
     },
     Kept(Kept),
 }
 
-#[derive(Debug, Serialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum Active {
-    /// Pushed, with commits not on the default branch: an open MR, or a
-    /// squash merge that only GitLab knows about.
-    Unmerged { ahead_of_default: usize },
-    /// Never pushed and nothing committed.
-    Idle,
-}
-
-/// Landed: merged with proof, or pushed once and fully on the default branch.
-fn finished(basis: &Basis, facts: &Facts) -> Option<Active> {
-    match basis {
-        Basis::Merged { .. } | Basis::Forced => None,
-        Basis::Local => match (&facts.upstream, facts.ahead_of_default) {
-            (Upstream::None, 0) => Some(Active::Idle),
-            (_, 0) => None,
-            (_, n) => Some(Active::Unmerged {
-                ahead_of_default: n,
+impl WorktreeVerdict {
+    fn of(e: &Evaluated) -> Self {
+        match &e.checked {
+            Checked::Removable(wt) => {
+                let landed = matches!(wt.basis(), Basis::Merged { .. }) || e.facts.landed();
+                if landed {
+                    Self::Finished {
+                        subject: wt.subject.clone(),
+                        basis: wt.basis().clone(),
+                    }
+                } else {
+                    Self::Active {
+                        subject: wt.subject.clone(),
+                        // Never pushed, nothing committed.
+                        idle: e.facts.on_default(),
+                        mr_check: e.mr_check(&wt.subject),
+                    }
+                }
+            }
+            Checked::Keep(wt, keep) => Self::Kept(Kept {
+                subject: wt.subject.clone(),
+                keep: keep.clone(),
+                mr_check: e.mr_check(&wt.subject),
             }),
-        },
+        }
     }
 }
 
@@ -87,13 +92,13 @@ impl Report for PruneReport {
         let failed = self
             .spaces
             .iter()
-            .filter_map(|s| s.dropped.as_ref())
-            .any(|d| !d.space_removed);
+            .filter_map(|s| s.removal.as_ref())
+            .any(|r| !r.space_removed);
         Exit::incomplete_if(failed)
     }
 }
 
-/// Whether prune removes what it finds removable.
+/// Whether prune removes what it finds finished.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Apply {
     DryRun,
@@ -103,61 +108,44 @@ pub enum Apply {
 pub fn prune(ws: &Workspace, proofs: &[MergedProof], apply: Apply) -> Result<PruneReport, Error> {
     let lock = ws.lock()?;
     let scans = space::scan_all(ws)?;
-    let fetch_errors = refresh(ws, &lock, &scans.iter().collect::<Vec<_>>());
+    let fetch_errors = refresh(
+        ws,
+        &lock,
+        scans
+            .iter()
+            .flat_map(|s| s.worktrees.iter().map(|f| &f.repo)),
+    );
+    let all: Vec<_> = scans.iter().flat_map(|s| &s.worktrees).collect();
+    let mut evaluated = evaluate_all(ws, &all, proofs)?.into_iter();
+
     let mut spaces = Vec::new();
     for scan in scans {
-        let mut worktrees = Vec::new();
-        for found in &scan.worktrees {
-            let (checked, facts, _) = evaluate(ws, found, proofs)?;
-            worktrees.push(match checked {
-                Checked::Removable(wt) => match finished(wt.basis(), &facts) {
-                    None => WorktreeVerdict::Finished {
-                        repo: wt.repo.clone(),
-                        basis: wt.basis().clone(),
-                    },
-                    Some(state) => {
-                        let gitlab = &ws.roster.require(&found.repo)?.gitlab;
-                        let hint = match (&state, &wt.branch, &facts.head) {
-                            (Active::Unmerged { .. }, Some(b), Some(head)) => Some(format!(
-                                "if the MR for {b} in {gitlab} is merged at {head}, pass --merged {}={head}",
-                                wt.repo
-                            )),
-                            _ => None,
-                        };
-                        WorktreeVerdict::Active {
-                            repo: wt.repo.clone(),
-                            branch: wt.branch.clone(),
-                            head: facts.head.clone(),
-                            state,
-                            hint,
-                        }
-                    }
-                },
-                Checked::Keep(wt, keep) => {
-                    let gitlab = ws.roster.require(&found.repo)?.gitlab.to_string();
-                    WorktreeVerdict::Kept(kept(&wt, &facts, keep, &gitlab))
-                }
-            });
-        }
+        let mine: Vec<Evaluated> = evaluated.by_ref().take(scan.worktrees.len()).collect();
+        let worktrees: Vec<WorktreeVerdict> = mine.iter().map(WorktreeVerdict::of).collect();
         let finished = scan.strays.is_empty()
             && worktrees
                 .iter()
                 .all(|w| matches!(w, WorktreeVerdict::Finished { .. }));
-        let strays = scan.strays.len();
-        let space = scan.name.clone();
-        // Removal re-checks every worktree itself; the verdict above only
-        // decides which spaces to try.
-        let dropped = if finished && apply == Apply::Remove {
-            Some(remove_space(ws, &lock, scan, proofs, Safety::Checked)?)
+        // Removal acts on the same decisions, taken under the same lock.
+        let removal = if finished && apply == Apply::Remove {
+            Some(remove_space(
+                ws,
+                &lock,
+                &scan.name,
+                mine,
+                scan.missing,
+                false,
+                Safety::Checked,
+            )?)
         } else {
             None
         };
         spaces.push(SpaceVerdict {
-            space,
+            space: scan.name,
             finished,
             worktrees,
-            strays,
-            dropped,
+            strays: scan.strays,
+            removal,
         });
     }
     Ok(PruneReport {

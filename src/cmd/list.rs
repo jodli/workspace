@@ -10,6 +10,7 @@ use crate::branch::PrefixStyle;
 use crate::error::Error;
 use crate::git::Git;
 use crate::names::{BranchName, GitlabPath, RepoName, SpaceName};
+use crate::removal::MissingView;
 use crate::space::{self, Found, Meta, SpaceScan};
 use crate::workspace::{RepoFacts, Workspace, par_map};
 use crate::worktree::Facts;
@@ -58,13 +59,6 @@ pub struct WorktreeView {
     pub facts: Facts,
 }
 
-#[derive(Debug, Serialize)]
-pub struct MissingView {
-    pub repo: RepoName,
-    pub path: PathBuf,
-    pub branch: Option<BranchName>,
-}
-
 pub fn list(ws: &Workspace) -> Result<ListReport, Error> {
     let entries: Vec<_> = ws.roster.iter().collect();
     let repos = par_map(&entries, |entry| {
@@ -104,15 +98,7 @@ pub fn space_views(ws: &Workspace, scans: Vec<SpaceScan>) -> Result<Vec<SpaceVie
             .collect::<Result<_, _>>()?;
         let notes = s.dir.join(space::NOTES_FILE);
         out.push(SpaceView {
-            missing: s
-                .missing
-                .into_iter()
-                .map(|f| MissingView {
-                    repo: f.repo,
-                    path: f.entry.path,
-                    branch: f.entry.branch,
-                })
-                .collect(),
+            missing: s.missing.into_iter().map(MissingView::from).collect(),
             notes: notes.is_file().then_some(notes),
             name: s.name,
             path: s.dir,

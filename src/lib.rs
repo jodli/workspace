@@ -13,6 +13,7 @@ pub mod config;
 pub mod error;
 pub mod git;
 pub mod names;
+pub mod removal;
 pub mod roster;
 pub mod space;
 pub mod workspace;
