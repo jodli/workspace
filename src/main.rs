@@ -129,30 +129,7 @@ fn emit(report: &impl Report) -> Exit {
     report.exit()
 }
 
-/// Prints a deny decision, or nothing to let the call through.
-fn guard() -> Exit {
-    let input = std::io::read_to_string(std::io::stdin()).ok();
-    let decision = input
-        .as_deref()
-        .and_then(|s| serde_json::from_str::<guard::HookInput>(s).ok())
-        .map_or(guard::Decision::Allow, |i| guard::decide(&i));
-    if let guard::Decision::Deny(reason) = decision {
-        print_json(&serde_json::json!({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            }
-        }));
-    }
-    Exit::Ok
-}
-
 fn run(cmd: Cmd) -> Result<Exit, Error> {
-    // The hook runs for every tool call, inside or outside a workspace.
-    if matches!(cmd, Cmd::Guard) {
-        return Ok(guard());
-    }
     let mut ws = Workspace::discover()?;
     Ok(match cmd {
         Cmd::Sync => emit(&cmd::sync::sync(&ws)?),
@@ -206,7 +183,8 @@ fn run(cmd: Cmd) -> Result<Exit, Error> {
             emit(&cmd::prune::prune(&ws, &merged, apply)?)
         }
         Cmd::Doctor => emit(&cmd::doctor::doctor(&ws)?),
-        Cmd::Guard => guard(),
+        // Dispatched in main: it must not need a workspace.
+        Cmd::Guard => Exit::Ok,
     })
 }
 
@@ -224,6 +202,14 @@ fn main() -> ExitCode {
             return Exit::Input.into();
         }
     };
+    // The hook runs for every tool call, inside or outside a workspace, and
+    // must never block on its own failure.
+    if matches!(cli.cmd, Cmd::Guard) {
+        if let Some(deny) = guard::respond(std::io::stdin().lock()) {
+            print_json(&deny);
+        }
+        return ExitCode::SUCCESS;
+    }
     match run(cli.cmd) {
         Ok(exit) => exit.into(),
         Err(e) => {

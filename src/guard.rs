@@ -6,11 +6,12 @@
 //! them (`git -C <path> ...`, `cd <path> && ...`). Anything it cannot parse
 //! is allowed rather than blocking the agent on a guard bug.
 
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::workspace::{canonical, find_root};
+use crate::workspace::find_root;
 
 #[derive(Debug, Deserialize)]
 pub struct HookInput {
@@ -26,6 +27,22 @@ pub enum Decision {
     Deny(String),
 }
 
+/// The whole hook protocol: hook JSON in, a deny object out, or nothing to
+/// let the call through.
+pub fn respond(input: impl Read) -> Option<serde_json::Value> {
+    let input: HookInput = serde_json::from_reader(input).ok()?;
+    match decide(&input) {
+        Decision::Allow => None,
+        Decision::Deny(reason) => Some(serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        })),
+    }
+}
+
 const USE_SPACE: &str = "repos/ holds canonical checkouts and is read-only. Work in a space: \
      `ws start <KEY> --issue <type> <repo>` or `ws spike <name> <repo>`; \
      `ws adopt <space> <repo> <branch>` for an existing branch.";
@@ -34,9 +51,9 @@ const USE_WS_WORKTREES: &str = "worktrees are managed by ws: `ws spike`/`ws star
 const USE_DROP: &str = "spaces and worktrees are removed with `ws drop <space>` (or `ws prune`), which \
      refuses to lose work. Deleting them by hand leaves stale git state.";
 
-/// Git subcommands that only read. Everything else is a write as far as
-/// `repos/` is concerned.
-const READ_ONLY_GIT: &[&str] = &[
+/// Git subcommands that are fine in `repos/`: they read, or only update
+/// remote-tracking refs (`fetch`).
+const ALLOWED_IN_REPOS: &[&str] = &[
     "status",
     "log",
     "show",
@@ -64,10 +81,34 @@ const READ_ONLY_GIT: &[&str] = &[
     "version",
 ];
 
+/// Where a path is, relative to its workspace.
+#[derive(Debug, PartialEq, Eq)]
+enum Place {
+    Repos,
+    /// `spaces/`, a space, or a worktree root.
+    SpaceRoot,
+    Elsewhere,
+}
+
+fn place(path: &Path) -> Option<Place> {
+    let root = find_root(path)?;
+    let rel = path.strip_prefix(root).ok()?;
+    let mut parts = rel.components();
+    Some(match parts.next() {
+        Some(c) if c.as_os_str() == "repos" => Place::Repos,
+        Some(c) if c.as_os_str() == "spaces" && parts.count() <= 2 => Place::SpaceRoot,
+        _ => Place::Elsewhere,
+    })
+}
+
+fn in_repos(path: &Path) -> bool {
+    place(path) == Some(Place::Repos)
+}
+
 pub fn decide(input: &HookInput) -> Decision {
     let cwd = input.cwd.clone().unwrap_or_else(|| PathBuf::from("."));
     match input.tool_name.as_str() {
-        "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => {
+        "Edit" | "Write" | "NotebookEdit" => {
             let path = ["file_path", "notebook_path"]
                 .iter()
                 .find_map(|k| input.tool_input.get(k)?.as_str());
@@ -94,19 +135,17 @@ fn bash(cwd: &Path, command: &str) -> Decision {
     let mut cwd = cwd.to_owned();
     // Segments between shell operators, each one simple command.
     for segment in words.split(|w| matches!(w.as_str(), "&&" | "||" | ";" | "|" | "&")) {
-        match segment {
-            [cd, dir, ..] if cd == "cd" => cwd = resolve(&cwd, Path::new(dir)),
-            [git, args @ ..] if git == "git" => {
-                if let Some(reason) = git_command(&cwd, args) {
-                    return Decision::Deny(reason.into());
-                }
+        let reason = match segment {
+            [cd, dir, ..] if cd == "cd" => {
+                cwd = resolve(&cwd, Path::new(dir));
+                None
             }
-            [rm, args @ ..] if rm == "rm" => {
-                if let Some(reason) = rm_command(&cwd, args) {
-                    return Decision::Deny(reason.into());
-                }
-            }
-            _ => {}
+            [git, args @ ..] if git == "git" => git_command(&cwd, args),
+            [rm, args @ ..] if rm == "rm" => rm_command(&cwd, args),
+            _ => None,
+        };
+        if let Some(reason) = reason {
+            return Decision::Deny(reason.into());
         }
     }
     Decision::Allow
@@ -130,10 +169,11 @@ fn git_command(cwd: &Path, args: &[String]) -> Option<&'static str> {
         return (rest.first() != Some(&"list") && find_root(&dir).is_some())
             .then_some(USE_WS_WORKTREES);
     }
-    if !in_repos(&dir) || READ_ONLY_GIT.contains(&sub) {
+    // The table first: it is the common case and needs no filesystem walk.
+    if ALLOWED_IN_REPOS.contains(&sub) || !in_repos(&dir) {
         return None;
     }
-    let read_only = match sub {
+    let reads = match sub {
         "branch" => branch_lists(&rest),
         "config" => rest
             .iter()
@@ -142,11 +182,11 @@ fn git_command(cwd: &Path, args: &[String]) -> Option<&'static str> {
         "stash" => matches!(rest.first(), Some(&"list" | &"show")),
         _ => false,
     };
-    (!read_only).then_some(USE_SPACE)
+    (!reads).then_some(USE_SPACE)
 }
 
-/// `git branch` with only listing flags. Any positional argument names a
-/// branch to create, any of the editing flags changes one.
+/// `git branch` that only lists. Every editing form names a branch, which
+/// shows up as a positional argument; these three edit the current one.
 fn branch_lists(args: &[&str]) -> bool {
     const TAKES_VALUE: &[&str] = &[
         "--contains",
@@ -157,27 +197,15 @@ fn branch_lists(args: &[&str]) -> bool {
         "--format",
         "--sort",
     ];
-    const EDITS: &[&str] = &[
-        "-d",
-        "-D",
-        "-m",
-        "-M",
-        "-c",
-        "-C",
-        "-f",
-        "-u",
-        "--delete",
-        "--move",
-        "--copy",
-        "--force",
-        "--set-upstream-to",
+    const EDITS_CURRENT: &[&str] = &[
         "--unset-upstream",
         "--edit-description",
-        "--track",
+        "--set-upstream-to",
+        "-u",
     ];
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        if EDITS.contains(a) || a.starts_with("--set-upstream-to=") {
+        if EDITS_CURRENT.contains(a) || a.starts_with("--set-upstream-to=") {
             return false;
         }
         if TAKES_VALUE.contains(a) {
@@ -193,35 +221,22 @@ fn branch_lists(args: &[&str]) -> bool {
 /// root. Deleting inside a worktree (`rm -rf target`) is normal work.
 fn rm_command(cwd: &Path, args: &[String]) -> Option<&'static str> {
     let recursive = args.iter().any(|a| {
-        a.starts_with('-') && !a.starts_with("--") && a.contains(['r', 'R']) || a == "--recursive"
+        (a.starts_with('-') && !a.starts_with("--") && a.contains(['r', 'R'])) || a == "--recursive"
     });
     if !recursive {
         return None;
     }
-    for target in args.iter().filter(|a| !a.starts_with('-')) {
-        let path = resolve(cwd, Path::new(target));
-        if in_repos(&path) {
-            return Some(USE_SPACE);
-        }
-        let Some(root) = find_root(&path) else {
-            continue;
-        };
-        if let Ok(rel) = path.strip_prefix(root.join("spaces"))
-            && rel.components().count() <= 2
-        {
-            return Some(USE_DROP);
-        }
-    }
-    None
+    args.iter()
+        .filter(|a| !a.starts_with('-'))
+        .find_map(|target| match place(&resolve(cwd, Path::new(target)))? {
+            Place::Repos => Some(USE_SPACE),
+            Place::SpaceRoot => Some(USE_DROP),
+            Place::Elsewhere => None,
+        })
 }
 
-/// Under `<workspace>/repos/`.
-fn in_repos(path: &Path) -> bool {
-    find_root(path).is_some_and(|root| path.strip_prefix(root.join("repos")).is_ok())
-}
-
-/// Absolute and without `.`/`..`, resolving symlinks where the path exists so
-/// it compares equal to the canonical workspace root.
+/// Absolute and without `.`/`..`. Lexical only: the workspace root is found
+/// by walking the same path's ancestors, so no symlink resolution is needed.
 fn resolve(cwd: &Path, path: &Path) -> PathBuf {
     let joined = if path.is_absolute() {
         path.to_owned()
@@ -238,18 +253,7 @@ fn resolve(cwd: &Path, path: &Path) -> PathBuf {
             other => out.push(other),
         }
     }
-    // Canonicalize the longest existing prefix; new files do not exist yet.
-    let existing = out.ancestors().find(|a| a.exists()).map(Path::to_path_buf);
-    match existing {
-        Some(base) => {
-            let rest = out
-                .strip_prefix(&base)
-                .map(Path::to_path_buf)
-                .unwrap_or_default();
-            canonical(&base).join(rest)
-        }
-        None => out,
-    }
+    out
 }
 
 #[cfg(test)]
@@ -258,7 +262,7 @@ mod tests {
 
     fn workspace() -> std::io::Result<(tempfile::TempDir, PathBuf)> {
         let tmp = tempfile::TempDir::new()?;
-        let root = canonical(tmp.path());
+        let root = tmp.path().to_owned();
         std::fs::write(root.join("ws.toml"), "")?;
         std::fs::create_dir_all(root.join("repos/app"))?;
         std::fs::create_dir_all(root.join("spaces/s/app"))?;
@@ -309,6 +313,25 @@ mod tests {
             Decision::Deny(_)
         ));
         assert_eq!(edit(&root.join("spaces/s/app/src/new.rs")), Decision::Allow);
+        Ok(())
+    }
+
+    // Claude Code only honours this exact shape; anything else lets the call
+    // through silently.
+    #[test]
+    fn deny_output_shape() -> std::io::Result<()> {
+        let (_tmp, root) = workspace()?;
+        let input = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "git -C repos/app commit -m x" },
+            "cwd": root,
+        });
+        let out = respond(input.to_string().as_bytes());
+        let decision = out
+            .as_ref()
+            .and_then(|o| o["hookSpecificOutput"]["permissionDecision"].as_str());
+        assert_eq!(decision, Some("deny"));
+        assert_eq!(respond(&b"not json"[..]), None);
         Ok(())
     }
 }
