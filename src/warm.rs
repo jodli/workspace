@@ -267,7 +267,7 @@ fn cow_filesystem(path: &Path) -> bool {
     statfs(path).is_ok_and(|s| [BTRFS_SUPER_MAGIC, XFS_SUPER_MAGIC].contains(&s.filesystem_type()))
 }
 
-/// Windows clones only on ReFS / Dev Drive, which ws does not rely on.
+/// Windows clones only on `ReFS` / Dev Drive, which ws does not rely on.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn mode(_: &Path, _: &Path) -> Mode {
     Mode::FullCopy
