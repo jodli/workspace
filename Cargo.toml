@@ -34,3 +34,6 @@ expect_used = "deny"
 panic = "deny"
 missing_errors_doc = "allow"
 module_name_repetitions = "allow"
+must_use_candidate = "allow"
+# git ref rules are case-sensitive, so `.lock` must be too
+case_sensitive_file_extension_comparisons = "allow"
