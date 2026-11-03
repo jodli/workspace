@@ -58,6 +58,8 @@ pub enum InputError {
     Epic,
     #[error("invalid --merged '{0}'")]
     MergedProof(String),
+    #[error("--merged names {0}, which has no worktree here")]
+    MergedUnused(RepoName),
     #[error("'{0}' is not in the roster")]
     UnknownRepo(RepoName),
     #[error("space '{space}' already exists as {}", existing.purpose.describe())]
@@ -78,6 +80,7 @@ impl InputError {
             Self::SubTask => "input.sub_task",
             Self::Epic => "input.epic",
             Self::MergedProof(_) => "input.merged_proof",
+            Self::MergedUnused(_) => "input.merged_unused",
             Self::UnknownRepo(_) => "input.unknown_repo",
             Self::SpaceConflict { .. } => "input.space_conflict",
             Self::Usage(_) => "input.usage",
@@ -105,6 +108,9 @@ impl InputError {
             Self::Epic => "start one of the epic's child tickets instead".into(),
             Self::MergedProof(_) => {
                 "use --merged <repo>=<sha>, where sha is the full head sha of the merged MR".into()
+            }
+            Self::MergedUnused(_) => {
+                "drop that --merged; `ws status <space>` lists the worktrees".into()
             }
             Self::UnknownRepo(_) => {
                 "`ws list` shows the roster; add a repo with `ws add <gitlab path>`".into()

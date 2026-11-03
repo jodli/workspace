@@ -95,6 +95,7 @@ pub struct Worktree<S> {
     state: S,
 }
 
+#[derive(Debug)]
 pub enum Checked {
     Removable(Worktree<Removable>),
     Keep(Worktree<Unchecked>, Keep),
@@ -170,6 +171,10 @@ pub struct Removed {
 }
 
 impl Worktree<Removable> {
+    pub fn basis(&self) -> &Basis {
+        &self.state.0
+    }
+
     pub fn remove(self, lock: &Lock, default: &BranchName) -> Result<Removed, Error> {
         let basis = self.state.0;
         self.owner

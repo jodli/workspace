@@ -23,6 +23,7 @@ walkdir = "2.5.0"
 nix = { version = "0.31.3", features = ["fs"] }
 
 [dev-dependencies]
+dunce = "1.0.5"
 tempfile = "3.27.0"
 
 [lints.rust]

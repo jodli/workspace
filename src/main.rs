@@ -4,6 +4,8 @@ use clap::{ColorChoice, Parser, Subcommand};
 use serde::Serialize;
 
 use ws::branch::{ChangeType, IssueType, PrefixStyle};
+use ws::cmd::drop::{MergedProof, Safety};
+use ws::cmd::prune::Apply;
 use ws::cmd::{self, Failure, Report};
 use ws::error::{Error, Exit, InputError};
 use ws::names::{BranchName, GitlabPath, JiraKey, RepoName, SpaceName};
@@ -64,6 +66,26 @@ enum Cmd {
         #[arg(long)]
         gitflow: bool,
     },
+    /// Remove a space's worktrees that are safe to remove, then the space.
+    /// Clean worktrees with nothing unpushed always qualify.
+    #[command(alias = "rm")]
+    Drop {
+        space: SpaceName,
+        /// `<repo>=<sha>`: the MR of this repo's branch is merged at this head
+        /// sha (from GitLab). Lets squash-merged branches go.
+        #[arg(long = "merged", value_name = "REPO=SHA")]
+        merged: Vec<MergedProof>,
+        /// Remove even with uncommitted or unpushed work. Loses it.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Report which spaces are finished; with --yes, remove them.
+    Prune {
+        #[arg(long = "merged", value_name = "REPO=SHA")]
+        merged: Vec<MergedProof>,
+        #[arg(long)]
+        yes: bool,
+    },
     /// Check git, GitLab reachability and the workspace invariants.
     Doctor,
 }
@@ -108,6 +130,22 @@ fn run(cmd: Cmd) -> Result<Exit, Error> {
                 PrefixStyle::Conventional
             };
             emit(&cmd::add::add(&mut ws, &paths, style)?)
+        }
+        Cmd::Drop {
+            space,
+            merged,
+            force,
+        } => {
+            let safety = if force {
+                Safety::Forced
+            } else {
+                Safety::Checked
+            };
+            emit(&cmd::drop::drop(&ws, &space, &merged, safety)?)
+        }
+        Cmd::Prune { merged, yes } => {
+            let apply = if yes { Apply::Remove } else { Apply::DryRun };
+            emit(&cmd::prune::prune(&ws, &merged, apply)?)
         }
         Cmd::Doctor => emit(&cmd::doctor::doctor(&ws)?),
     })

@@ -4,7 +4,9 @@ pub mod add;
 pub mod adopt;
 pub mod create;
 pub mod doctor;
+pub mod drop;
 pub mod list;
+pub mod prune;
 pub mod sync;
 
 use serde::Serialize;
