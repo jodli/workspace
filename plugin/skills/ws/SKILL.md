@@ -49,8 +49,9 @@ local refs only: remote state (`behind`, `upstream`) is as of each repo's
    - `active`: safe, but not landed (`progress`: `no_commits` or `unmerged`). Left alone.
    - `kept`: removing it would lose work (`reason`). Leave it to whoever owns it.
 2. Where an entry has `merge_check`, run its `command` (the forge CLI, `gh` or
-   `glab`). If an entry's `head_sha_field` equals the worktree's `head`, the
-   work landed: pass `merge_check.if_merged` in step 3.
+   `glab`). It prints the head sha of each merged request from that branch. If
+   the worktree's `head` is among them, the work landed: pass
+   `merge_check.if_merged` in step 3.
 3. `ws prune --yes [--merged <repo>=<sha>...]` removes spaces whose worktrees
    are all finished.
 4. `ws drop <space> [--merged ...]` removes one space now, as far as nothing

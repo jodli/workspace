@@ -6,8 +6,8 @@ use std::str::FromStr;
 
 use serde::Serialize;
 
-use crate::config::{Forge, MergedQuery};
 use crate::error::{Error, InputError};
+use crate::forge::Forge;
 use crate::git::Upstream;
 use crate::names::{BranchName, CommitSha, RemotePath, RepoName, SpaceName};
 use crate::space::{self, Found};
@@ -73,13 +73,10 @@ pub fn refresh<'a>(
 /// What the agent should look up on the forge before this worktree can go.
 #[derive(Debug, Clone, Serialize)]
 pub struct MergeCheck {
-    pub remote: RemotePath,
-    pub source_branch: BranchName,
-    /// Run it; an entry whose `head_sha_field` equals the worktree's `head`
-    /// proves the work landed.
-    #[serde(flatten)]
-    pub query: MergedQuery,
-    /// Pass this to `drop`/`prune` when it does.
+    /// Prints the head sha of each merged request from this branch. If the
+    /// worktree's `head` is among them, the work landed.
+    pub command: String,
+    /// Pass this to `drop`/`prune` when it is.
     pub if_merged: String,
 }
 
@@ -101,9 +98,7 @@ fn merge_check(
     let pushed = !matches!(facts.upstream, Upstream::None);
     match (&subject.branch, &facts.head) {
         (Some(branch), Some(head)) if pushed && !facts.on_default() => Some(MergeCheck {
-            remote: remote.clone(),
-            source_branch: branch.clone(),
-            query: forge.merged_query(remote, branch),
+            command: forge.merged_heads(remote, branch),
             if_merged: format!("--merged {}={head}", subject.repo),
         }),
         _ => None,
@@ -191,8 +186,12 @@ pub fn remove_space(
     let mut removable = Vec::new();
     let mut kept = Vec::new();
     for e in evaluated {
-        let merge_check = e.merge_check;
-        match (e.checked, safety) {
+        let Evaluated {
+            checked,
+            merge_check,
+            ..
+        } = e;
+        match (checked, safety) {
             (Checked::Removable(wt), _) => removable.push(wt),
             (Checked::Keep(wt, _), Safety::Forced) => removable.push(wt.force()),
             (Checked::Keep(wt, keep), Safety::Checked) => kept.push(Kept {

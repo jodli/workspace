@@ -6,7 +6,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, WorkspaceError};
-use crate::names::{BranchName, DirName, Host, RemotePath};
+use crate::forge::Forge;
+use crate::names::DirName;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -14,81 +15,6 @@ pub struct Config {
     pub forge: Forge,
     #[serde(default)]
     pub warm: Warm,
-}
-
-/// Where the repos are hosted. ws never talks to the forge itself; it only
-/// builds clone URLs and the commands an agent runs to check merges.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Forge {
-    pub kind: ForgeKind,
-    pub host: Host,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ForgeKind {
-    Gitlab,
-    Github,
-}
-
-/// A command that lists the merged pull/merge requests of one branch, as
-/// JSON, and the field in each entry that holds the request's head sha.
-#[derive(Debug, Clone, Serialize)]
-pub struct MergedQuery {
-    pub command: String,
-    pub head_sha_field: &'static str,
-}
-
-impl Forge {
-    /// Both forges take the same ssh form.
-    pub fn ssh_url(&self, path: &RemotePath) -> String {
-        format!("git@{}:{path}.git", self.host)
-    }
-
-    /// The repo is passed with its host, so the command works outside a
-    /// checkout and against self-hosted instances.
-    pub fn merged_query(&self, path: &RemotePath, branch: &BranchName) -> MergedQuery {
-        let repo = format!("{}/{path}", self.host);
-        let b = branch.as_str();
-        let (args, head_sha_field): (Vec<&str>, _) = match self.kind {
-            ForgeKind::Gitlab => (
-                vec![
-                    "glab",
-                    "mr",
-                    "list",
-                    "-R",
-                    &repo,
-                    "--source-branch",
-                    b,
-                    "--merged",
-                    "-F",
-                    "json",
-                ],
-                "sha",
-            ),
-            ForgeKind::Github => (
-                vec![
-                    "gh",
-                    "pr",
-                    "list",
-                    "--repo",
-                    &repo,
-                    "--head",
-                    b,
-                    "--state",
-                    "merged",
-                    "--json",
-                    "headRefOid",
-                ],
-                "headRefOid",
-            ),
-        };
-        MergedQuery {
-            command: shell_words::join(args),
-            head_sha_field,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]

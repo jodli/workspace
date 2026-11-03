@@ -11,6 +11,7 @@ pub mod branch;
 pub mod cmd;
 pub mod config;
 pub mod error;
+pub mod forge;
 pub mod git;
 pub mod guard;
 pub mod names;

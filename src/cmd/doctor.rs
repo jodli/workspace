@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use super::Report;
 use crate::error::{Error, Exit};
+use crate::forge::Forge;
 use crate::git::Git;
 use crate::workspace::{Canonical, Workspace, par_map};
 
@@ -125,7 +126,7 @@ fn local(ws: &Workspace) -> Result<Vec<Check>, Error> {
 /// Reachability first: without it the ssh check would only time out.
 fn network(ws: &Workspace) -> Vec<Check> {
     let host = ws.config.forge.host.as_str();
-    let reachable = (host, 22)
+    let reachable = (host, Forge::SSH_PORT)
         .to_socket_addrs()
         .ok()
         .and_then(|mut addrs| addrs.next())
@@ -133,7 +134,7 @@ fn network(ws: &Workspace) -> Vec<Check> {
     let mut checks = vec![check(
         "forge_reachable",
         reachable,
-        format!("{host}:22"),
+        format!("{host}:{}", Forge::SSH_PORT),
         "check network access to forge.host in ws.toml",
     )];
     // Through git, so it tests the ssh setup git actually uses.

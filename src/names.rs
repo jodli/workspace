@@ -98,7 +98,8 @@ name_type!(
     /// A ticket id from any tracker: a `PROJ-123` style key or a bare
     /// issue number like `123`. It names the space and ends the
     /// branch, so it must be a path segment; the digit keeps a ticket title
-    /// from being passed by mistake.
+    /// from being passed by mistake. A bare number assumes one tracker per
+    /// workspace.
     TicketKey,
     "ticket key",
     |s| is_segment(s) && s.chars().any(|c| c.is_ascii_digit()),
