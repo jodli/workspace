@@ -48,32 +48,49 @@ pub enum WorktreeVerdict {
         #[serde(flatten)]
         basis: Basis,
     },
-    /// Safe to drop, but not landed.
+    /// Safe to drop, but not landed: prune leaves it.
     Active {
         #[serde(flatten)]
         subject: Subject,
-        idle: bool,
+        #[serde(flatten)]
+        progress: Progress,
         #[serde(skip_serializing_if = "Option::is_none")]
         mr_check: Option<MrCheck>,
     },
     Kept(Kept),
 }
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "progress", rename_all = "snake_case")]
+pub enum Progress {
+    /// Nothing committed beyond the default branch yet; just started.
+    NoCommits,
+    /// Pushed, with commits not on the default branch: an open MR, or a
+    /// squash merge that `mr_check` can confirm.
+    Unmerged { ahead_of_default: usize },
+}
+
 impl WorktreeVerdict {
     fn of(e: &Evaluated) -> Self {
         match &e.checked {
             Checked::Removable(wt) => {
-                let landed = matches!(wt.basis(), Basis::Merged { .. }) || e.facts.landed();
+                let landed = matches!(wt.basis(), Basis::MrMerged { .. }) || e.facts.landed();
                 if landed {
                     Self::Finished {
                         subject: wt.subject.clone(),
                         basis: wt.basis().clone(),
                     }
                 } else {
+                    let progress = if e.facts.on_default() {
+                        Progress::NoCommits
+                    } else {
+                        Progress::Unmerged {
+                            ahead_of_default: e.facts.ahead_of_default,
+                        }
+                    };
                     Self::Active {
                         subject: wt.subject.clone(),
-                        // Never pushed, nothing committed.
-                        idle: e.facts.on_default(),
+                        progress,
                         mr_check: e.mr_check(&wt.subject),
                     }
                 }

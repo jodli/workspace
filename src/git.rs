@@ -47,15 +47,28 @@ pub struct Git {
 }
 
 /// Uncommitted state. Ignored files (build dirs) never count.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Changes {
     pub tracked: usize,
     pub untracked: usize,
+    /// The first few changed paths, so an agent can judge them without git.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<String>,
 }
 
+const EXAMPLES: usize = 10;
+
 impl Changes {
-    pub fn is_clean(self) -> bool {
+    pub fn is_clean(&self) -> bool {
         self.tracked == 0 && self.untracked == 0
+    }
+
+    fn add(&mut self, path: Option<&str>) {
+        if let Some(p) = path
+            && self.examples.len() < EXAMPLES
+        {
+            self.examples.push(p.to_owned());
+        }
     }
 }
 
@@ -421,13 +434,19 @@ fn parse_status(s: &str) -> Option<Status> {
                 }
                 _ => {}
             }
-        } else if f.starts_with('?') {
+        } else if let Some(path) = f.strip_prefix("? ") {
             st.changes.untracked += 1;
-        } else if f.starts_with(['1', 'u']) {
+            st.changes.add(Some(path));
+        } else if f.starts_with("1 ") {
             st.changes.tracked += 1;
-        } else if f.starts_with('2') {
+            st.changes.add(f.splitn(9, ' ').nth(8));
+        } else if f.starts_with("u ") {
+            st.changes.tracked += 1;
+            st.changes.add(f.splitn(11, ' ').nth(10));
+        } else if f.starts_with("2 ") {
             // Renames and copies carry the original path as an extra field.
             st.changes.tracked += 1;
+            st.changes.add(f.splitn(10, ' ').nth(9));
             fields.next();
         }
     }
@@ -515,7 +534,7 @@ mod tests {
         );
         let st = parse_status(&set);
         assert!(matches!(
-            st.as_ref().map(|s| (&s.upstream, s.changes)),
+            st.as_ref().map(|s| (&s.upstream, &s.changes)),
             Some((
                 Upstream::Set {
                     ahead: 2,
@@ -524,7 +543,8 @@ mod tests {
                 },
                 Changes {
                     tracked: 0,
-                    untracked: 1
+                    untracked: 1,
+                    ..
                 }
             ))
         ));

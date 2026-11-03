@@ -35,6 +35,9 @@ pub enum Purpose {
         ticket: JiraKey,
         issue: IssueType,
         change: ChangeType,
+        /// The parent ticket, for sub-tasks.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<JiraKey>,
     },
     /// An existing branch pulled into a space, e.g. to review an MR.
     Adopted {

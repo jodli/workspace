@@ -21,7 +21,7 @@ the hint names the fix.
    - Bug: `--issue bug`
    - Story: `--issue story`
    - Task: `--issue task --change <c>`. Judge `<c>` from the ticket: `feat`, `fix`, `chore`, `refactor`, `docs`, `test`, `ci`, `perf` or `build`.
-   - Sub-task: use the parent ticket's type with the rule above.
+   - Sub-task: the parent ticket's type with the rule above, plus `--parent <PARENT-KEY>`.
    - Epic: not worked on directly. Start one of its child tickets.
 2. `ws start <KEY> --issue <type> [--change <c>] <repo>...`. Work in the
    `path` of each worktree in the result. The branch prefix follows each
@@ -29,25 +29,33 @@ the hint names the fix.
 3. Exploration without a ticket: `ws spike <name> <repo>...`.
 4. An existing branch, e.g. to review an MR: `ws adopt <space> <repo> <branch>`.
 
-Re-running any of these is safe. New worktrees get `target/` and
-`node_modules/` copied from another worktree; pass `--cold` to skip that.
+Re-running any of these is safe; existing worktrees are reported and left
+alone. New worktrees get `target/` and `node_modules/` copied from another
+worktree of the repo; pass `--cold` to skip that.
 
 Follow the repo's commit convention. Where release tooling parses
 conventional commits, the commit type sets the version, not the branch name.
 
 ## Look
 
-`ws list` shows every repo and space. `ws status <space>` shows one.
+`ws list` shows every repo and space, `ws status <space>` one space. Both read
+local refs only: remote state (`behind`, `upstream`) is as of each repo's
+`fetched` time. `ws sync` refreshes it.
 
 ## Clean up
 
-1. `ws prune` reports which spaces are finished. It changes nothing.
-2. For entries with `mr_check`, look up the MR:
-   `glab api "projects/<project, url-encoded>/merge_requests?source_branch=<branch>&state=merged"`.
-   If a merged MR's `sha` equals the worktree's `head`, pass `mr_check.if_merged`.
-3. `ws prune --yes [--merged <repo>=<sha>...]` removes the finished spaces.
+1. `ws prune` fetches, then reports each worktree as one of:
+   - `finished`: the work landed. Removed by `--yes`.
+   - `active`: safe, but not landed (`progress`: `no_commits` or `unmerged`). Left alone.
+   - `kept`: removing it would lose work (`reason`). Leave it to whoever owns it.
+2. Where an entry has `mr_check`, run `glab api "<mr_check.api_path>"`. If a
+   merged MR's `sha` equals the worktree's `head`, the work landed: pass
+   `mr_check.if_merged` in step 3.
+3. `ws prune --yes [--merged <repo>=<sha>...]` removes spaces whose worktrees
+   are all finished.
 4. `ws drop <space> [--merged ...]` removes one space now, as far as nothing
-   unpushed would be lost. `--force` loses work: only when the user asks.
+   would be lost (open MRs included). Never pass `--force` unless the user
+   asks for it: it discards work.
 
 ## Repos
 

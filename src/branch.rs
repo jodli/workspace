@@ -16,7 +16,11 @@ pub enum IssueType {
     Bug,
     Story,
     Task,
+    // Hidden from --help but still parsed, so passing them gets the
+    // precise refusal instead of "invalid value".
+    #[value(hide = true)]
     SubTask,
+    #[value(hide = true)]
     Epic,
 }
 

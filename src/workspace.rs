@@ -55,7 +55,11 @@ pub struct RepoFacts {
     pub default_branch: BranchName,
     pub branch: Option<BranchName>,
     pub canonical: Canonical,
+    /// Against the last fetch, see `fetched`.
     pub behind: usize,
+    /// When origin was last fetched. Everything ws reports about remotes is
+    /// as of then; `ws sync` refreshes it.
+    pub fetched: Option<jiff::Timestamp>,
 }
 
 /// What occupies `spaces/<space>/<repo>`.
@@ -209,7 +213,12 @@ impl Repo<'_> {
         } else {
             Canonical::Ok
         };
+        let fetched = std::fs::metadata(self.dir().join(".git/FETCH_HEAD"))
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| jiff::Timestamp::try_from(t).ok());
         Ok(RepoFacts {
+            fetched,
             branch: status.branch,
             default_branch,
             canonical,

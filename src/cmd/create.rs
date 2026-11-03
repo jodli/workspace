@@ -45,7 +45,14 @@ pub(crate) fn warm_placed(
     outcome: &CreateOutcome,
     warmth: Warmth,
 ) -> Vec<WarmReport> {
-    if warmth == Warmth::Cold || matches!(outcome, CreateOutcome::Failed(_)) {
+    // Existing worktrees are in use; copying under a running build is not
+    // what anyone wants.
+    if warmth == Warmth::Cold
+        || matches!(
+            outcome,
+            CreateOutcome::Failed(_) | CreateOutcome::Existing { .. }
+        )
+    {
         return Vec::new();
     }
     warm::warm(repo, &ws.config.warm, path)
@@ -57,7 +64,9 @@ pub enum CreateOutcome {
     /// New branch from the default branch on origin, or from the local HEAD
     /// of `repos/<repo>` when origin has none.
     Created {
-        from_origin: bool,
+        /// `origin/<default>`, or `HEAD` of `repos/<repo>` when origin has
+        /// no default branch.
+        base: String,
     },
     /// The branch already existed locally and was checked out as is.
     ReusedBranch,
@@ -98,6 +107,7 @@ pub fn start(
     key: JiraKey,
     issue: IssueType,
     change: Option<ChangeType>,
+    parent: Option<JiraKey>,
     repos: &[RepoName],
     warmth: Warmth,
 ) -> Result<CreateReport, Error> {
@@ -106,6 +116,7 @@ pub fn start(
         ticket: key.clone(),
         issue,
         change,
+        parent,
     });
     create(ws, &Work::Ticket { key, change }, meta, repos, warmth)
 }
@@ -215,12 +226,11 @@ pub(crate) fn place(
         return Ok((CreateOutcome::ReusedBranch, fetch_error));
     }
     let default = repo.default_branch()?;
-    let from_origin = repo.git.has(Rev::Origin(&default))?;
-    let base = if from_origin {
-        Rev::Origin(&default)
+    let (base, shown) = if repo.git.has(Rev::Origin(&default))? {
+        (Rev::Origin(&default), format!("origin/{default}"))
     } else {
-        Rev::Head
+        (Rev::Head, "HEAD".to_owned())
     };
     repo.git.worktree_add(lock, path, branch, Some(base))?;
-    Ok((CreateOutcome::Created { from_origin }, fetch_error))
+    Ok((CreateOutcome::Created { base: shown }, fetch_error))
 }

@@ -74,6 +74,9 @@ pub fn refresh<'a>(
 pub struct MrCheck {
     pub project: GitlabPath,
     pub source_branch: BranchName,
+    /// For `glab api`: the merged MRs of this branch. A match whose `sha`
+    /// equals the worktree's `head` proves it landed.
+    pub api_path: String,
     /// Pass this to `drop`/`prune` if the MR is merged at the worktree's head.
     pub if_merged: String,
 }
@@ -94,11 +97,29 @@ impl Evaluated {
             (Some(branch), Some(head)) if pushed && !self.facts.on_default() => Some(MrCheck {
                 project: self.gitlab.clone(),
                 source_branch: branch.clone(),
+                api_path: format!(
+                    "projects/{}/merge_requests?source_branch={}&state=merged",
+                    url_encode(self.gitlab.as_str()),
+                    url_encode(branch.as_str())
+                ),
                 if_merged: format!("--merged {}={head}", subject.repo),
             }),
             _ => None,
         }
     }
+}
+
+/// Percent-encodes everything but unreserved characters, as GitLab wants
+/// for project paths and query values.
+fn url_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                char::from(b).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 pub fn evaluate(ws: &Workspace, found: &Found, proofs: &[MergedProof]) -> Result<Evaluated, Error> {

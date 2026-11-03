@@ -66,6 +66,9 @@ enum Cmd {
         /// Required for tasks; must match for bugs (fix) and stories (feat).
         #[arg(long, value_enum)]
         change: Option<ChangeType>,
+        /// The parent ticket, when KEY is a sub-task. Recorded in SPACE.md.
+        #[arg(long)]
+        parent: Option<JiraKey>,
         #[arg(required = true)]
         repos: Vec<RepoName>,
         #[command(flatten)]
@@ -102,8 +105,11 @@ enum Cmd {
     },
     /// Report which spaces are finished; with --yes, remove them.
     Prune {
+        /// `<repo>=<sha>` from a merged MR (see `mr_check` in the report).
+        /// Matched by sha, so one flag covers every space with that head.
         #[arg(long = "merged", value_name = "REPO=SHA")]
         merged: Vec<MergedProof>,
+        /// Remove the finished spaces instead of only reporting them.
         #[arg(long)]
         yes: bool,
     },
@@ -142,6 +148,7 @@ fn run(cmd: Cmd) -> Result<Exit, Error> {
             key,
             issue,
             change,
+            parent,
             repos,
             warm,
         } => emit(&cmd::create::start(
@@ -149,6 +156,7 @@ fn run(cmd: Cmd) -> Result<Exit, Error> {
             key,
             issue,
             change,
+            parent,
             &repos,
             warm.into(),
         )?),

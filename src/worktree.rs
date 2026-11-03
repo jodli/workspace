@@ -79,12 +79,13 @@ pub struct Removable {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "basis", rename_all = "snake_case")]
 pub enum Basis {
-    /// Clean and nothing unpushed.
-    Local,
+    /// Clean, and every commit is on a remote branch (the upstream, or the
+    /// default branch when there is no live upstream).
+    NothingUnpushed,
     /// Clean and HEAD is exactly the head of a merged MR, as the agent
     /// reported from GitLab. Covers squash merges, where the commits never
     /// reach the default branch.
-    Merged {
+    MrMerged {
         sha: CommitSha,
     },
     Forced,
@@ -97,7 +98,13 @@ pub enum Keep {
     Uncommitted {
         changes: Changes,
     },
+    /// Commits on no remote branch: never pushed.
     Unpushed {
+        commits: usize,
+    },
+    /// The remote branch was deleted and its commits are not on the default
+    /// branch: usually a squash merge. `mr_check` says how to confirm.
+    UpstreamGone {
         commits: usize,
     },
     /// A merged sha was given, but the worktree is somewhere else.
@@ -148,19 +155,23 @@ impl Worktree<Unchecked> {
             Keep::Locked
         } else if !facts.changes.is_clean() {
             Keep::Uncommitted {
-                changes: facts.changes,
+                changes: facts.changes.clone(),
             }
         } else if let Some(sha) = merged.iter().find(|s| facts.head.as_ref() == Some(**s)) {
-            let basis = Basis::Merged {
+            let basis = Basis::MrMerged {
                 sha: (*sha).clone(),
             };
             return Checked::Removable(self.into_removable(basis, true));
         } else if facts.unpushed == 0 {
             let delete_branch = facts.on_default();
-            return Checked::Removable(self.into_removable(Basis::Local, delete_branch));
+            return Checked::Removable(self.into_removable(Basis::NothingUnpushed, delete_branch));
         } else if let Some(sha) = merged.first() {
             Keep::HeadMoved {
                 merged: (*sha).clone(),
+            }
+        } else if matches!(facts.upstream, Upstream::Gone { .. }) {
+            Keep::UpstreamGone {
+                commits: facts.unpushed,
             }
         } else {
             Keep::Unpushed {
@@ -195,8 +206,9 @@ pub struct Removed {
     #[serde(flatten)]
     pub basis: Basis,
     /// The local branch was deleted too. It stays when it has commits that
-    /// are pushed but not on the default branch.
-    pub branch_deleted: bool,
+    /// are pushed but not on the default branch. ws never deletes remote
+    /// branches.
+    pub local_branch_deleted: bool,
 }
 
 impl Worktree<Removable> {
@@ -211,7 +223,7 @@ impl Worktree<Removable> {
         } = self.state;
         self.owner
             .worktree_remove(lock, &self.subject.path, matches!(basis, Basis::Forced))?;
-        let branch_deleted = match (&self.subject.branch, delete_branch) {
+        let local_branch_deleted = match (&self.subject.branch, delete_branch) {
             (Some(b), true) => {
                 self.owner.branch_delete(lock, b)?;
                 true
@@ -221,7 +233,7 @@ impl Worktree<Removable> {
         Ok(Removed {
             subject: self.subject,
             basis,
-            branch_deleted,
+            local_branch_deleted,
         })
     }
 }

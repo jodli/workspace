@@ -4,7 +4,7 @@ use common::{Fixture, REPO, TestResult};
 use filetime::FileTime;
 use ws::cmd::create::CreateReport;
 use ws::cmd::create::spike;
-use ws::warm::{Skip, WarmOutcome, Warmth};
+use ws::warm::{WarmOutcome, Warmth};
 
 fn target(report: &CreateReport) -> Option<&WarmOutcome> {
     report.worktrees[0]
@@ -50,9 +50,7 @@ fn copies_build_dirs_with_mtimes_and_links_once() -> TestResult {
     assert!(!f.worktree("b").join("target.ws-warm").exists());
 
     let again = spike(&f.ws()?, "b".parse()?, &repos, Warmth::Warm)?;
-    assert!(matches!(
-        target(&again),
-        Some(WarmOutcome::Skipped { why: Skip::Exists })
-    ));
+    // An existing worktree is in use: a re-run does not copy under it.
+    assert!(again.worktrees[0].warm.is_empty());
     Ok(())
 }

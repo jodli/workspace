@@ -48,8 +48,8 @@ fn clean_fresh_space_goes_with_branch_and_notes_archived() -> TestResult {
     spike(&f.ws()?, "s".parse()?, &repos()?, Warmth::Cold)?;
     let r = drop_with(&f, "s", &[])?;
     assert!(r.removal.space_removed);
-    assert!(matches!(r.removal.removed[0].basis, Basis::Local));
-    assert!(r.removal.removed[0].branch_deleted);
+    assert!(matches!(r.removal.removed[0].basis, Basis::NothingUnpushed));
+    assert!(r.removal.removed[0].local_branch_deleted);
     assert!(f.root.join("spaces/.archive/s.md").is_file());
     assert_eq!(
         git(
@@ -70,8 +70,8 @@ fn pushed_but_unmerged_branch_survives_its_worktree() -> TestResult {
     git(&wt, &["push", "--quiet", "-u", "origin", "spike/s"])?;
 
     let r = drop_with(&f, "s", &[])?;
-    assert!(matches!(r.removal.removed[0].basis, Basis::Local));
-    assert!(!r.removal.removed[0].branch_deleted);
+    assert!(matches!(r.removal.removed[0].basis, Basis::NothingUnpushed));
+    assert!(!r.removal.removed[0].local_branch_deleted);
     Ok(())
 }
 
@@ -88,7 +88,7 @@ fn squash_merge_needs_proof_of_the_exact_head() -> TestResult {
     git(&f.origin, &["branch", "-D", "spike/s"])?;
 
     let r = drop_with(&f, "s", &[])?;
-    assert!(matches!(r.removal.kept[0].keep, Keep::Unpushed { .. }));
+    assert!(matches!(r.removal.kept[0].keep, Keep::UpstreamGone { .. }));
     assert!(
         r.removal.kept[0]
             .mr_check
@@ -102,7 +102,7 @@ fn squash_merge_needs_proof_of_the_exact_head() -> TestResult {
 
     let r = drop_with(&f, "s", &[format!("{REPO}={head}")])?;
     assert!(r.removal.space_removed);
-    assert!(matches!(r.removal.removed[0].basis, Basis::Merged { .. }));
+    assert!(matches!(r.removal.removed[0].basis, Basis::MrMerged { .. }));
     Ok(())
 }
 
@@ -115,19 +115,21 @@ fn start_is_idempotent_and_refuses_a_different_purpose() -> TestResult {
         key.clone(),
         IssueType::Story,
         None,
+        None,
         &repos()?,
         Warmth::Cold,
     )?;
     assert_eq!(first.worktrees[0].branch.as_str(), "feat/DEMO-1");
     assert!(matches!(
-        first.worktrees[0].outcome,
-        CreateOutcome::Created { from_origin: true }
+        &first.worktrees[0].outcome,
+        CreateOutcome::Created { base } if base == "origin/main"
     ));
 
     let again = start(
         &f.ws()?,
         key.clone(),
         IssueType::Story,
+        None,
         None,
         &repos()?,
         Warmth::Cold,
@@ -143,6 +145,7 @@ fn start_is_idempotent_and_refuses_a_different_purpose() -> TestResult {
         key,
         IssueType::Task,
         Some(ChangeType::Chore),
+        None,
         &repos()?,
         Warmth::Cold,
     );
