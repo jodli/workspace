@@ -29,28 +29,19 @@ impl Gitlab {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct Warm {
-    #[serde(default = "default_dirs")]
     pub dirs: Vec<DirName>,
-    #[serde(default)]
     pub fallback: Fallback,
 }
 
 impl Default for Warm {
     fn default() -> Self {
         Self {
-            dirs: default_dirs(),
+            dirs: vec![DirName::known("target"), DirName::known("node_modules")],
             fallback: Fallback::default(),
         }
     }
-}
-
-fn default_dirs() -> Vec<DirName> {
-    ["target", "node_modules"]
-        .into_iter()
-        .filter_map(|d| d.parse().ok())
-        .collect()
 }
 
 /// What the warm copy does on a volume without copy-on-write.

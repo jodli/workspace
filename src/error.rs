@@ -1,11 +1,13 @@
 //! Every failure an agent can see. Each error has a stable `kind`, an exit
 //! code by category, and where possible a hint naming the fix.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use serde::Serialize;
 
 use crate::branch::{ChangeType, IssueType};
+use crate::names::{RepoName, SpaceName};
 
 /// Process exit codes. 0 and 1 come with a normal result on stdout, the rest
 /// with an error object.
@@ -51,7 +53,7 @@ pub enum InputError {
     #[error("invalid --merged '{0}'")]
     MergedProof(String),
     #[error("'{0}' is not in the roster")]
-    UnknownRepo(String),
+    UnknownRepo(RepoName),
     #[error("space '{space}' already exists as {existing}")]
     SpaceConflict { space: String, existing: String },
     #[error("{0}")]
@@ -73,20 +75,34 @@ impl InputError {
         }
     }
 
-    fn hint(&self) -> Option<String> {
+    fn hint(&self) -> Option<Cow<'static, str>> {
         Some(match self {
             Self::InvalidName { .. } | Self::Usage(_) => return None,
             Self::ChangeRequired => {
-                "judge the change from the ticket and pass --change <feat|fix|chore|refactor|docs|test|ci|perf|build>".into()
+                let names: Vec<_> = <ChangeType as clap::ValueEnum>::value_variants()
+                    .iter()
+                    .map(|c| c.as_str())
+                    .collect();
+                format!(
+                    "judge the change from the ticket and pass --change <{}>",
+                    names.join("|")
+                )
+                .into()
             }
-            Self::ChangeConflict { .. } => "drop --change; bugs are fix, stories are feat".into(),
+            Self::ChangeConflict { issue, implied, .. } => {
+                format!("drop --change; a {issue:?} is always {}", implied.as_str()).into()
+            }
             Self::SubTask => "pass --issue with the type of the parent ticket".into(),
             Self::Epic => "start one of the epic's child tickets instead".into(),
             Self::MergedProof(_) => {
                 "use --merged <repo>=<sha>, where sha is the full head sha of the merged MR".into()
             }
-            Self::UnknownRepo(_) => "`ws list` shows the roster; add a repo with `ws add <gitlab path>`".into(),
-            Self::SpaceConflict { .. } => "`ws status <space>` shows what the space is; pick another name".into(),
+            Self::UnknownRepo(_) => {
+                "`ws list` shows the roster; add a repo with `ws add <gitlab path>`".into()
+            }
+            Self::SpaceConflict { .. } => {
+                "`ws status <space>` shows what the space is; pick another name".into()
+            }
         })
     }
 }
@@ -105,9 +121,9 @@ pub enum WorkspaceError {
         message: String,
     },
     #[error("no space '{0}'")]
-    NoSuchSpace(String),
+    NoSuchSpace(SpaceName),
     #[error("repo '{repo}' is in the roster but not cloned at {path}")]
-    RepoMissing { repo: String, path: PathBuf },
+    RepoMissing { repo: RepoName, path: PathBuf },
 }
 
 impl WorkspaceError {
@@ -121,16 +137,18 @@ impl WorkspaceError {
         }
     }
 
-    fn hint(&self) -> String {
-        match self {
+    // Same shape as the other categories, even though every variant has one.
+    #[allow(clippy::unnecessary_wraps)]
+    fn hint(&self) -> Option<Cow<'static, str>> {
+        Some(match self {
             Self::NotFound(_) => "run inside a workspace or set WS_ROOT".into(),
             Self::Config { .. } => {
                 "fix ws.toml; ws.example.toml in the ws repo lists every key".into()
             }
-            Self::Roster { .. } => "roster lines are <name><TAB><gitlab path>[<TAB>gitflow]".into(),
+            Self::Roster { .. } => crate::roster::FORMAT.into(),
             Self::NoSuchSpace(_) => "`ws list` shows existing spaces".into(),
             Self::RepoMissing { .. } => "`ws sync` clones missing roster repos".into(),
-        }
+        })
     }
 }
 
@@ -146,6 +164,23 @@ pub enum GitError {
     },
     #[error("`git {args}` printed something unexpected: {output}")]
     Unexpected { args: String, output: String },
+}
+
+impl GitError {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Spawn(_) => "git.spawn",
+            Self::Failed { .. } => "git.failed",
+            Self::Unexpected { .. } => "git.unexpected",
+        }
+    }
+
+    fn hint(&self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::Spawn(_) => Some("install git and put it on PATH".into()),
+            Self::Failed { .. } | Self::Unexpected { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -185,12 +220,8 @@ impl Error {
     pub fn report(&self) -> ErrorReport {
         let (kind, hint) = match self {
             Self::Input(e) => (e.kind(), e.hint()),
-            Self::Workspace(e) => (e.kind(), Some(e.hint())),
-            Self::Git(GitError::Spawn(_)) => {
-                ("git.spawn", Some("install git and put it on PATH".into()))
-            }
-            Self::Git(GitError::Failed { .. }) => ("git.failed", None),
-            Self::Git(GitError::Unexpected { .. }) => ("git.unexpected", None),
+            Self::Workspace(e) => (e.kind(), e.hint()),
+            Self::Git(e) => (e.kind(), e.hint()),
             Self::Io { .. } => ("io", None),
             Self::Busy(_) => (
                 "busy",
@@ -210,7 +241,5 @@ pub struct ErrorReport {
     pub kind: &'static str,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hint: Option<String>,
+    pub hint: Option<Cow<'static, str>>,
 }
-
-pub type Result<T, E = Error> = std::result::Result<T, E>;

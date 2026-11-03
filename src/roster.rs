@@ -14,6 +14,9 @@ use crate::branch::PrefixStyle;
 use crate::error::{Error, InputError, WorkspaceError};
 use crate::names::{GitlabPath, RepoName};
 
+/// The line format, also used as the hint for roster errors.
+pub const FORMAT: &str = "roster lines are <name><TAB><gitlab path>[<TAB>gitflow]";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RepoEntry {
     pub name: RepoName,
@@ -43,19 +46,18 @@ impl Roster {
         let mut entries: Vec<RepoEntry> = Vec::new();
         for (i, raw) in text.lines().enumerate() {
             let line_no = i + 1;
-            let line = raw.split('#').next().unwrap_or_default().trim();
+            let line = raw.split_once('#').map_or(raw, |(l, _)| l).trim();
             if line.is_empty() {
                 continue;
             }
             let cols: Vec<&str> = line
                 .split('\t')
-                .filter(|c| !c.trim().is_empty())
                 .map(str::trim)
+                .filter(|c| !c.is_empty())
                 .collect();
             let (name, gitlab, style) = match cols.as_slice() {
-                [n, p] | [n, p, "conventional"] => (*n, *p, PrefixStyle::Conventional),
-                [n, p, "gitflow"] => (*n, *p, PrefixStyle::Gitflow),
-                [_, _, other] => return Err(err(line_no, format!("unknown style '{other}'"))),
+                [n, p] => (*n, *p, PrefixStyle::Conventional),
+                [n, p, s] => (*n, *p, s.parse().map_err(|m| err(line_no, m))?),
                 _ => {
                     return Err(err(
                         line_no,
@@ -63,13 +65,10 @@ impl Roster {
                     ));
                 }
             };
+            let field = |e: InputError| err(line_no, e.to_string());
             let entry = RepoEntry {
-                name: name
-                    .parse()
-                    .map_err(|e: InputError| err(line_no, e.to_string()))?,
-                gitlab: gitlab
-                    .parse()
-                    .map_err(|e: InputError| err(line_no, e.to_string()))?,
+                name: name.parse().map_err(field)?,
+                gitlab: gitlab.parse().map_err(field)?,
                 style,
             };
             if entries.iter().any(|e| e.name == entry.name) {
@@ -96,7 +95,7 @@ impl Roster {
 
     pub fn require(&self, name: &RepoName) -> Result<&RepoEntry, InputError> {
         self.get(name)
-            .ok_or_else(|| InputError::UnknownRepo(name.to_string()))
+            .ok_or_else(|| InputError::UnknownRepo(name.clone()))
     }
 
     pub fn by_path(&self, gitlab: &GitlabPath) -> Option<&RepoEntry> {
@@ -123,8 +122,8 @@ impl Roster {
     pub fn append(&mut self, entry: RepoEntry) -> Result<(), Error> {
         use std::io::Write;
         let style = match entry.style {
-            PrefixStyle::Conventional => "",
-            PrefixStyle::Gitflow => "\tgitflow",
+            PrefixStyle::Conventional => String::new(),
+            PrefixStyle::Gitflow => format!("\t{}", PrefixStyle::Gitflow.as_str()),
         };
         let existing = std::fs::read(&self.path).map_err(Error::io(&self.path))?;
         let sep = if existing.last().is_some_and(|b| *b != b'\n') {

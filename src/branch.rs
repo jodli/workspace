@@ -36,7 +36,8 @@ pub enum ChangeType {
 }
 
 impl ChangeType {
-    fn conventional(self) -> &'static str {
+    /// The conventional commit name. The one place these names are spelled.
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Feat => "feat",
             Self::Fix => "fix",
@@ -52,8 +53,7 @@ impl ChangeType {
 }
 
 /// Branch prefix convention of a repo, set per repo in the roster.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PrefixStyle {
     /// `feat/`, `fix/`, `chore/`, ...
     #[default]
@@ -67,8 +67,32 @@ impl PrefixStyle {
         match (self, change) {
             (Self::Gitflow, ChangeType::Feat) => "feature",
             (Self::Gitflow, ChangeType::Fix) => "bugfix",
-            (_, c) => c.conventional(),
+            (_, c) => c.as_str(),
         }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Conventional => "conventional",
+            Self::Gitflow => "gitflow",
+        }
+    }
+}
+
+impl std::str::FromStr for PrefixStyle {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        [Self::Conventional, Self::Gitflow]
+            .into_iter()
+            .find(|v| v.as_str() == s)
+            .ok_or_else(|| format!("unknown style '{s}', expected conventional or gitflow"))
+    }
+}
+
+impl Serialize for PrefixStyle {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
     }
 }
 
@@ -110,10 +134,8 @@ impl Work {
 
     pub fn branch(&self, style: PrefixStyle) -> BranchName {
         match self {
-            Self::Spike(name) => BranchName::prefixed("spike", name.as_str()),
-            Self::Ticket { key, change } => {
-                BranchName::prefixed(style.prefix(*change), key.as_str())
-            }
+            Self::Spike(name) => BranchName::prefixed("spike", name),
+            Self::Ticket { key, change } => BranchName::prefixed(style.prefix(*change), key),
         }
     }
 }

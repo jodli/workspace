@@ -10,7 +10,7 @@ use serde::Serialize;
 use crate::error::InputError;
 
 macro_rules! name_type {
-    ($(#[$doc:meta])* $name:ident, $what:literal, $check:expr, $rule:literal) => {
+    ($(#[$doc:meta])* $name:ident, $what:literal, $check:expr, $rule:expr) => {
         $(#[$doc])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
         #[serde(transparent)]
@@ -45,18 +45,6 @@ macro_rules! name_type {
             }
         }
 
-        impl AsRef<str> for $name {
-            fn as_ref(&self) -> &str {
-                &self.0
-            }
-        }
-
-        impl AsRef<std::path::Path> for $name {
-            fn as_ref(&self) -> &std::path::Path {
-                std::path::Path::new(&self.0)
-            }
-        }
-
         impl<'de> serde::Deserialize<'de> for $name {
             fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
                 let s = String::deserialize(d)?;
@@ -69,6 +57,8 @@ macro_rules! name_type {
 /// A single path segment: starts alphanumeric, then `[A-Za-z0-9._-]`. Rules out
 /// `.`, `..`, hidden dirs like `.archive`, separators and anything a shell or
 /// Windows would trip over.
+const SEGMENT_RULE: &str = "starts with a letter or digit, then letters, digits, '.', '_', '-'";
+
 fn is_segment(s: &str) -> bool {
     let mut chars = s.chars();
     let Some(first) = chars.next() else {
@@ -85,7 +75,7 @@ name_type!(
     SpaceName,
     "space name",
     is_segment,
-    "starts with a letter or digit, then letters, digits, '.', '_', '-'"
+    SEGMENT_RULE
 );
 
 name_type!(
@@ -93,7 +83,7 @@ name_type!(
     RepoName,
     "repo name",
     is_segment,
-    "starts with a letter or digit, then letters, digits, '.', '_', '-'"
+    SEGMENT_RULE
 );
 
 name_type!(
@@ -157,7 +147,7 @@ name_type!(
     DirName,
     "directory name",
     is_segment,
-    "a single directory name, not hidden"
+    SEGMENT_RULE
 );
 
 name_type!(
@@ -170,11 +160,48 @@ name_type!(
     "letters, digits, '.', '-'"
 );
 
+/// Names that are valid as the last part of a branch: validated segments.
+pub(crate) trait BranchLeaf {
+    fn leaf(&self) -> &str;
+}
+
+impl BranchLeaf for SpaceName {
+    fn leaf(&self) -> &str {
+        &self.0
+    }
+}
+
+impl BranchLeaf for JiraKey {
+    fn leaf(&self) -> &str {
+        &self.0
+    }
+}
+
 impl BranchName {
-    /// Joins a prefix and a name into `prefix/name`. Both parts are already
-    /// validated segments, so the result is always a valid branch name.
-    pub(crate) fn prefixed(prefix: &str, name: &str) -> Self {
-        Self(format!("{prefix}/{name}"))
+    /// `prefix/name`. The prefix comes from a fixed table and the name is a
+    /// validated segment, so the result is a valid branch name by construction.
+    pub(crate) fn prefixed(prefix: &'static str, name: &impl BranchLeaf) -> Self {
+        Self(format!("{prefix}/{}", name.leaf()))
+    }
+}
+
+/// Path segments can be joined onto paths directly.
+macro_rules! segment_path {
+    ($($name:ident),*) => {$(
+        impl AsRef<std::path::Path> for $name {
+            fn as_ref(&self) -> &std::path::Path {
+                std::path::Path::new(&self.0)
+            }
+        }
+    )*};
+}
+segment_path!(SpaceName, RepoName, DirName);
+
+impl DirName {
+    /// For built-in defaults that are known to be valid.
+    pub(crate) fn known(s: &'static str) -> Self {
+        debug_assert!(is_segment(s));
+        Self(s.to_owned())
     }
 }
 
