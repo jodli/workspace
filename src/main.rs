@@ -7,6 +7,7 @@ use ws::branch::{ChangeType, IssueType, PrefixStyle};
 use ws::cmd::prune::Apply;
 use ws::cmd::{self, Failure, Report};
 use ws::error::{Error, Exit, InputError};
+use ws::guard;
 use ws::names::{BranchName, GitlabPath, JiraKey, RepoName, SpaceName};
 use ws::removal::{MergedProof, Safety};
 use ws::warm::Warmth;
@@ -108,6 +109,9 @@ enum Cmd {
     },
     /// Check git, GitLab reachability and the workspace invariants.
     Doctor,
+    /// Claude Code `PreToolUse` hook: reads the hook JSON on stdin, denies
+    /// writes into repos/ and raw worktree management. Allows on any doubt.
+    Guard,
 }
 
 fn print_json(value: &impl Serialize) {
@@ -125,7 +129,30 @@ fn emit(report: &impl Report) -> Exit {
     report.exit()
 }
 
+/// Prints a deny decision, or nothing to let the call through.
+fn guard() -> Exit {
+    let input = std::io::read_to_string(std::io::stdin()).ok();
+    let decision = input
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<guard::HookInput>(s).ok())
+        .map_or(guard::Decision::Allow, |i| guard::decide(&i));
+    if let guard::Decision::Deny(reason) = decision {
+        print_json(&serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }));
+    }
+    Exit::Ok
+}
+
 fn run(cmd: Cmd) -> Result<Exit, Error> {
+    // The hook runs for every tool call, inside or outside a workspace.
+    if matches!(cmd, Cmd::Guard) {
+        return Ok(guard());
+    }
     let mut ws = Workspace::discover()?;
     Ok(match cmd {
         Cmd::Sync => emit(&cmd::sync::sync(&ws)?),
@@ -179,6 +206,7 @@ fn run(cmd: Cmd) -> Result<Exit, Error> {
             emit(&cmd::prune::prune(&ws, &merged, apply)?)
         }
         Cmd::Doctor => emit(&cmd::doctor::doctor(&ws)?),
+        Cmd::Guard => guard(),
     })
 }
 

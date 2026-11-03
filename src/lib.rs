@@ -12,6 +12,7 @@ pub mod cmd;
 pub mod config;
 pub mod error;
 pub mod git;
+pub mod guard;
 pub mod names;
 pub mod removal;
 pub mod roster;
