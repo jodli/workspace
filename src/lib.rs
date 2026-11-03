@@ -8,7 +8,11 @@
 //! ```
 
 pub mod branch;
+pub mod cmd;
 pub mod config;
 pub mod error;
+pub mod git;
 pub mod names;
 pub mod roster;
+pub mod space;
+pub mod workspace;

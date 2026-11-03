@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::branch::{ChangeType, IssueType};
-use crate::names::{RepoName, SpaceName};
+use crate::names::{BranchName, RepoName, SpaceName};
 
 /// Process exit codes. 0 and 1 come with a normal result on stdout, the rest
 /// with an error object.
@@ -54,8 +54,11 @@ pub enum InputError {
     MergedProof(String),
     #[error("'{0}' is not in the roster")]
     UnknownRepo(RepoName),
-    #[error("space '{space}' already exists as {existing}")]
-    SpaceConflict { space: String, existing: String },
+    #[error("space '{space}' already exists as {}", existing.describe())]
+    SpaceConflict {
+        space: SpaceName,
+        existing: Box<crate::space::Meta>,
+    },
     #[error("{0}")]
     Usage(String),
 }
@@ -124,6 +127,12 @@ pub enum WorkspaceError {
     NoSuchSpace(SpaceName),
     #[error("repo '{repo}' is in the roster but not cloned at {path}")]
     RepoMissing { repo: RepoName, path: PathBuf },
+    #[error("{path} exists and is not a worktree of {repo}")]
+    Occupied { repo: RepoName, path: PathBuf },
+    #[error("no branch '{branch}' in {repo}, locally or on origin")]
+    NoSuchBranch { repo: RepoName, branch: BranchName },
+    #[error("{repo} has {branch} checked out with uncommitted changes")]
+    CheckedOutDirty { repo: RepoName, branch: BranchName },
 }
 
 impl WorkspaceError {
@@ -134,6 +143,9 @@ impl WorkspaceError {
             Self::Roster { .. } => "workspace.roster",
             Self::NoSuchSpace(_) => "workspace.no_such_space",
             Self::RepoMissing { .. } => "workspace.repo_missing",
+            Self::Occupied { .. } => "workspace.occupied",
+            Self::NoSuchBranch { .. } => "workspace.no_such_branch",
+            Self::CheckedOutDirty { .. } => "workspace.checked_out_dirty",
         }
     }
 
@@ -148,6 +160,15 @@ impl WorkspaceError {
             Self::Roster { .. } => crate::roster::FORMAT.into(),
             Self::NoSuchSpace(_) => "`ws list` shows existing spaces".into(),
             Self::RepoMissing { .. } => "`ws sync` clones missing roster repos".into(),
+            Self::Occupied { .. } => {
+                "move the directory away; ws never deletes what it did not create".into()
+            }
+            Self::NoSuchBranch { .. } => {
+                "`git -C repos/<repo> branch -a` lists branches; fetch first if it is new".into()
+            }
+            Self::CheckedOutDirty { .. } => {
+                "commit or stash in repos/<repo> first; it must stay on its default branch".into()
+            }
         })
     }
 }
